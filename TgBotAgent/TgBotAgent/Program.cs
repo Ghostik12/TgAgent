@@ -27,7 +27,7 @@ namespace TgBotAgent
 
         private static void ConfigureServices(IServiceCollection services)
         {
-            services.AddScoped<ITelegramBotClient>(provide => new TelegramBotClient("7696415234:AAE51W-B3-lPM8U20v24r3XUjkJ68152OXI"));
+            services.AddScoped<ITelegramBotClient>(provide => new TelegramBotClient(""));
             services.AddHostedService<Bot>();
             services.AddHostedService<CleanupService>();
             services.AddDbContext<ApplicationDbContext>();
