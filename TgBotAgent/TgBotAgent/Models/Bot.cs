@@ -12,14 +12,14 @@ namespace TgBotAgent.Models
     {
         private ITelegramBotClient _telegramClient;
         private TextMessageController _textMessageController;
+        private VoiceMessageController _voiceMessageController;
 
 
-        public Bot(ITelegramBotClient telegramClient, TextMessageController textMessageController)
+        public Bot(ITelegramBotClient telegramClient, TextMessageController textMessageController, VoiceMessageController voiceMessageController)
         {
             _telegramClient = telegramClient;
-            //_voiceMessageController = voiceMessageController;
+            _voiceMessageController = voiceMessageController;
             _textMessageController = textMessageController;
-            //_defaultMessage = defaultMessage;
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -33,7 +33,7 @@ namespace TgBotAgent.Models
         {
             if (update.Type == UpdateType.CallbackQuery)
             {
-                await _textMessageController.HandleCallBack(update.CallbackQuery, _telegramClient, update);
+                await _textMessageController.BotClient_OnCallbackQuery(update.CallbackQuery);
                 return;
             }
 
@@ -42,7 +42,7 @@ namespace TgBotAgent.Models
                 switch (update.Message!.Type)
                 {
                     case MessageType.Voice:
-                        await _telegramClient.SendTextMessageAsync(update.Message.Chat.Id, "Отправка аудио не доступна для пользователя.", cancellationToken: cancellationToken);
+                        _voiceMessageController.HandlerVois(update.Message.From.Id, update);
                         return;
                     case MessageType.Text:
                         if (update.Message.Text == "/start")
@@ -59,25 +59,31 @@ namespace TgBotAgent.Models
                         }
                         return;
                     case MessageType.Document:
-                        await _telegramClient.SendTextMessageAsync(update.Message.Chat.Id, "Отправка документов не доступна для пользователя.");
+                        _voiceMessageController.HandlerDocument(update.Message.From.Id, update);
                         return;
                     case MessageType.Photo:
-                        await _telegramClient.SendTextMessageAsync(update.Message.Chat.Id, "Отправка фото не доступна для пользователя.");
+                        _voiceMessageController.HandlerPhoto(update.Message.From.Id, update);
                         return;
                     case MessageType.Video:
-                        await _telegramClient.SendTextMessageAsync(update.Message.Chat.Id, "Отправка видео не доступна для пользователя.");
+                        _voiceMessageController.HandlerVideo(update.Message.From.Id, update);
                         return;
                     case MessageType.Animation:
-                        await _telegramClient.SendTextMessageAsync(update.Message.Chat.Id, "Отправка анимации не доступна для пользователя.");
+                        _voiceMessageController.HandlerAnimation(update.Message.From.Id, update);
                         return;
                     case MessageType.Audio:
-                        await _telegramClient.SendTextMessageAsync(update.Message.Chat.Id, "Отправка аудио не доступна для пользователя.");
+                        _voiceMessageController.HandlerAudio(update.Message.From.Id, update);
                         return;
                     case MessageType.Contact:
-                        await _telegramClient.SendTextMessageAsync(update.Message.Chat.Id, "Отправка контактов не доступна для пользователя.");
+                        _voiceMessageController.HandlerContact(update.Message.From.Id, update);
                         return;
                     case MessageType.Sticker:
-                        await _telegramClient.SendTextMessageAsync(update.Message.Chat.Id, "Отправка стикеров не доступна для пользователя.");
+                        _voiceMessageController.HandlerSticker(update.Message.From.Id, update);
+                        return;
+                    case MessageType.Location:
+                        _voiceMessageController.HandlerLocation(update.Message.From.Id, update);
+                        return;
+                    case MessageType.VideoChatStarted:
+                        _voiceMessageController.HandlerVideoNote(update.Message.From.Id, update);
                         return;
                     default:
                         //await _defaultMessage.Handle(update.Message, cancellationToken);

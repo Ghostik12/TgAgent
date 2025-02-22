@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using TgBotAgent.DB;
@@ -11,9 +12,11 @@ using TgBotAgent.DB;
 namespace TgBotAgent.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20250219180702_FixedAddLink")]
+    partial class FixedAddLink
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -65,7 +68,7 @@ namespace TgBotAgent.Migrations
                         new
                         {
                             Id = 1,
-                            ChatId = 313064453L
+                            ChatId = 1451999567L
                         });
                 });
 
@@ -80,10 +83,6 @@ namespace TgBotAgent.Migrations
                     b.Property<long>("FromUserId")
                         .HasColumnType("bigint");
 
-                    b.Property<string>("FromUsername")
-                        .IsRequired()
-                        .HasColumnType("text");
-
                     b.Property<string>("Text")
                         .IsRequired()
                         .HasColumnType("text");
@@ -94,10 +93,6 @@ namespace TgBotAgent.Migrations
                     b.Property<long>("ToUserId")
                         .HasColumnType("bigint");
 
-                    b.Property<string>("ToUsername")
-                        .IsRequired()
-                        .HasColumnType("text");
-
                     b.HasKey("Id");
 
                     b.ToTable("Messages");
@@ -107,41 +102,17 @@ namespace TgBotAgent.Migrations
                         {
                             Id = 1,
                             FromUserId = 123456789L,
-                            FromUsername = "pro",
                             Text = "Привет!",
                             Timestamp = new DateTime(2025, 2, 17, 10, 0, 0, 0, DateTimeKind.Utc),
-                            ToUserId = 987654321L,
-                            ToUsername = "sto"
+                            ToUserId = 987654321L
                         },
                         new
                         {
                             Id = 2,
                             FromUserId = 987654321L,
-                            FromUsername = "sto",
                             Text = "Как дела?",
                             Timestamp = new DateTime(2023, 10, 1, 10, 0, 0, 0, DateTimeKind.Utc),
-                            ToUserId = 123456789L,
-                            ToUsername = "pro"
-                        },
-                        new
-                        {
-                            Id = 3,
-                            FromUserId = 7140034389L,
-                            FromUsername = "lercky",
-                            Text = "Привет!",
-                            Timestamp = new DateTime(2025, 2, 19, 10, 0, 0, 0, DateTimeKind.Utc),
-                            ToUserId = 1952565657L,
-                            ToUsername = "violet_myst"
-                        },
-                        new
-                        {
-                            Id = 4,
-                            FromUserId = 1952565657L,
-                            FromUsername = "violet_myst",
-                            Text = "Как дела?",
-                            Timestamp = new DateTime(2025, 2, 19, 10, 1, 0, 0, DateTimeKind.Utc),
-                            ToUserId = 7140034389L,
-                            ToUsername = "lercky"
+                            ToUserId = 123456789L
                         });
                 });
 
@@ -208,54 +179,6 @@ namespace TgBotAgent.Migrations
                             UserId2 = 987654321L,
                             UserName1 = "unknown",
                             UserName2 = "unknown"
-                        },
-                        new
-                        {
-                            Id = 2,
-                            UserId1 = 1952565657L,
-                            UserId2 = 7140034389L,
-                            UserName1 = "violet_myst",
-                            UserName2 = "lercky"
-                        });
-                });
-
-            modelBuilder.Entity("TgBotAgent.Models.Users", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<long>("ChatId")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("Username")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("Users");
-
-                    b.HasData(
-                        new
-                        {
-                            Id = 1,
-                            ChatId = 1952565657L,
-                            Username = "violet_myst"
-                        },
-                        new
-                        {
-                            Id = 2,
-                            ChatId = 7140034389L,
-                            Username = "lercky"
-                        },
-                        new
-                        {
-                            Id = 3,
-                            ChatId = 313064453L,
-                            Username = "imkr1stal"
                         });
                 });
 #pragma warning restore 612, 618

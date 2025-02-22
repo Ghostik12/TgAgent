@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using TgBotAgent.DB;
@@ -11,9 +12,11 @@ using TgBotAgent.DB;
 namespace TgBotAgent.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20250220094552_FixedExport")]
+    partial class FixedExport
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -65,7 +68,7 @@ namespace TgBotAgent.Migrations
                         new
                         {
                             Id = 1,
-                            ChatId = 313064453L
+                            ChatId = 1451999567L
                         });
                 });
 
@@ -237,26 +240,6 @@ namespace TgBotAgent.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("Users");
-
-                    b.HasData(
-                        new
-                        {
-                            Id = 1,
-                            ChatId = 1952565657L,
-                            Username = "violet_myst"
-                        },
-                        new
-                        {
-                            Id = 2,
-                            ChatId = 7140034389L,
-                            Username = "lercky"
-                        },
-                        new
-                        {
-                            Id = 3,
-                            ChatId = 313064453L,
-                            Username = "imkr1stal"
-                        });
                 });
 #pragma warning restore 612, 618
         }

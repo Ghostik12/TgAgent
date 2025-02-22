@@ -1,4 +1,5 @@
-﻿using Microsoft.Extensions.Hosting;
+﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
@@ -28,8 +29,10 @@ namespace TgBotAgent
             {
                 try
                 {
+                    var newDay = await _dbContext.Settings.Where(s => s.Key == "ClearDay").Select(s => s.Value).FirstOrDefaultAsync();
+                    var inDay = int.Parse(newDay);
                     // Удаляем сообщения старше 7 дней
-                    var cutoffDate = DateTime.UtcNow.AddDays(-7);
+                    var cutoffDate = DateTime.UtcNow.AddDays(inDay);
                     var oldMessages = _dbContext.Messages
                         .Where(m => m.Timestamp < cutoffDate)
                         .ToList();
