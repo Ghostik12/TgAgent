@@ -26,12 +26,12 @@ namespace TgBotAgent.Controller
         internal async Task CheckUserOrAdmin(Update update)
         {
             var chatId = update.Message.Chat.Id;
-            var isUser = db.Users.FirstOrDefaultAsync(u => u.Id == chatId);
+            var isUser = await db.Users.Where(u => u.ChatId == chatId).FirstOrDefaultAsync();
             var userLink = await db.UserLinks.Where(ul => ul.UserId1 == chatId || ul.UserId2 == chatId || ul.UserName1 == update.Message.Chat.Username || ul.UserName2 == update.Message.Chat.Username)
                     .FirstOrDefaultAsync();
             if (await IsAdmin(chatId))
             {
-                if (isUser.Result == null) 
+                if (isUser == null) 
                 {
                     var userAdd = new Users()
                     {
