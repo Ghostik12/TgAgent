@@ -1,6 +1,6 @@
 {
   "BotConfiguration": {
-    "BotToken": "7696415234:AAE51W-B3-lPM8U20v24r3XUjkJ68152OXI"
+    "BotToken": "8179155928:AAHDnmyz0F_p3PTV5dqbtJKRGj4HiZeXcOI"
   },
   "ConnectionStrings": {
     "DefaultConnection": "Host=localhost;Database=tgagent;Username=postgres;Password=12345Ob@"

@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Scaffolding.Metadata;
 using Telegram.Bot;
 using Telegram.Bot.Exceptions;
 using Telegram.Bot.Types;
@@ -26,27 +27,25 @@ namespace TgBotAgent.Controller
         {
             var chatId = update.Message.Chat.Id;
             var isUser = db.Users.FirstOrDefaultAsync(u => u.Id == chatId);
+            var userLink = await db.UserLinks.Where(ul => ul.UserId1 == chatId || ul.UserId2 == chatId || ul.UserName1 == update.Message.Chat.Username || ul.UserName2 == update.Message.Chat.Username)
+                    .FirstOrDefaultAsync();
             if (await IsAdmin(chatId))
             {
-                if (isUser == null)
-                    return;
-                var user = await db.Users.FirstOrDefaultAsync(u => u.ChatId == chatId);
-                user.Username = update.Message.From.Username;
-                db.Users.Update(user);
-
-                await db.SaveChangesAsync();
+                if (isUser.Result == null) 
+                {
+                    var userAdd = new Users()
+                    {
+                        ChatId = chatId,
+                        Username = update.Message.From.Username
+                    };
+                    db.Users.Add(userAdd);
+                    await db.SaveChangesAsync();
+                }
                 await AdminMenu(chatId);
             }
-            else
+            if(userLink != null)
             {
-                var userLink = await db.UserLinks
-                    .FirstOrDefaultAsync(ul => ul.UserId1 == chatId || ul.UserId2 == chatId || ul.UserName1 == update.Message.Chat.Username || ul.UserName2 == update.Message.Chat.Username);
-                if (userLink == null)
-                {
-                    await _clientBot.SendTextMessageAsync(chatId, "Вы не связаны с другим пользователем.");
-                    return;
-                }
-                else if (userLink.UserName1 == update.Message.Chat.Username)
+                if (userLink.UserName1 == update.Message.Chat.Username)
                 {
                     if (userLink.UserId1 != chatId)
                         userLink.UserId1 = chatId;
@@ -79,6 +78,9 @@ namespace TgBotAgent.Controller
                 await db.SaveChangesAsync();
                 await WelcomeMessage(chatId);
             }
+
+            await _clientBot.SendTextMessageAsync(chatId, "Вы не связаны с другим пользователем.");
+            return;
         }
 
         private async Task WelcomeMessage(long chatId)
@@ -91,10 +93,9 @@ namespace TgBotAgent.Controller
         {
             await _clientBot.SendTextMessageAsync(chatId, "Команды для администратора:\n" +
                 "/admin link <id1> <id2>\n/admin unlink <id1>\n/admin addblacklist <слово>\n" +
-                "/admin removeblacklist <слово>\n/admin export 2025-01-01\n/admin setwelcome <приветственное сообщение>\n" +
-                "/admin setname <новое имя бота>\n/admin clearday <число с минусом>\n" +
+                "/admin export 2025-01-01\n" +
                 "/admin viewlinks\n/admin export24\n/admin unlinku <username>\n/admin viewlinks\n/admin viewpairs\n" +
-                "/admin adminlist\nКоманды писать без знаков <>\nПри добавлении через username знак @ не использовать");
+                "Команды писать без знаков <>\nПри добавлении через username знак @ не использовать");
         }
 
         internal async Task HandleCallBack(CallbackQuery? callbackQuery, ITelegramBotClient telegramClient, Update update)
@@ -116,6 +117,12 @@ namespace TgBotAgent.Controller
 
             switch (command)
             {
+                case "delete":
+                    var user = db.Users.Where(u => u.ChatId == chatId);
+                    foreach(var u in user)
+                        db.Users.Remove(u);
+                    db.SaveChanges();
+                    break;
                 case "clearday":
                     if (parts.Length < 3)
                     {
@@ -175,7 +182,7 @@ namespace TgBotAgent.Controller
                 case "linku":
                     if (parts.Length < 4 || parts.Length > 4)
                     {
-                        await _clientBot.SendTextMessageAsync(chatId, "Использование: /admin link <id1> <id2>");
+                        await _clientBot.SendTextMessageAsync(chatId, "Использование: /admin linku <username1> <username2>");
                         return;
                     }
                     await LinkUsersUsername(chatId, parts[2], parts[3]);
@@ -183,7 +190,7 @@ namespace TgBotAgent.Controller
                 case "unlinku":
                     if (parts.Length < 3 || parts.Length > 3)
                     {
-                        await _clientBot.SendTextMessageAsync(chatId, "Использование: /admin unlink <id>");
+                        await _clientBot.SendTextMessageAsync(chatId, "Использование: /admin unlinku <username>");
                         return;
                     }
                     await UnlinkUserUsername(chatId, parts[2]);
@@ -193,6 +200,9 @@ namespace TgBotAgent.Controller
                     break;
                 case "removeblacklist":
                     await RemoveBlacklistWord(chatId, string.Join(" ", parts.Skip(2)));
+                    break;
+                case "blacklist":
+                    await GetBlackList(chatId);
                     break;
                 case "viewlinks":
                     await ViewMessages(chatId, 0);
@@ -215,6 +225,26 @@ namespace TgBotAgent.Controller
                     await _clientBot.SendTextMessageAsync(chatId, "Неизвестная команда.");
                     break;
             }
+        }
+
+        private async Task GetBlackList(long chatId)
+        {
+            var blackList = await db.BlacklistWords.Select(bl => new {bl.Word}).ToListAsync();
+            if (!blackList.Any())
+            {
+                await _clientBot.SendTextMessageAsync(chatId, "Слов в черном списке нет.");
+                return;
+            }
+
+            var blackWords = new List<string>();
+            foreach (var word in blackList)
+            {
+                blackWords.Add($"{word.Word}");
+            }
+
+            // Отправляем список администратору
+            var messageText = "Список слов:\n" + string.Join("\n", blackWords);
+            await _clientBot.SendTextMessageAsync(chatId, messageText);
         }
 
         private async Task AdminList(long chatId)
@@ -516,15 +546,49 @@ namespace TgBotAgent.Controller
             // Создаем клавиатуру
             var inlineKeyboard = new InlineKeyboardMarkup(new[] { inlineButtons });
 
-            // Отправляем или обновляем сообщение
-            if (_currentPage.ContainsKey(chatId))
+            try
             {
-                await _clientBot.EditMessageTextAsync(chatId, _currentPage[chatId], $"Список связанных пар (страница {page + 1} из {totalPages}):\n{pairsText}", replyMarkup: inlineKeyboard);
+                // Проверяем, есть ли сохраненное сообщение для этого чата
+                if (_currentPage.ContainsKey(chatId))
+                {
+                    // Пытаемся отредактировать сообщение
+                    await _clientBot.EditMessageTextAsync(
+                        chatId,
+                        _currentPage[chatId],
+                        $"Список связанных пар (страница {page + 1} из {totalPages}):\n{pairsText}",
+                        replyMarkup: inlineKeyboard
+                    );
+                }
+                else
+                {
+                    // Если сообщение не сохранено, отправляем новое
+                    var message = await _clientBot.SendTextMessageAsync(
+                        chatId,
+                        $"Список связанных пар (страница {page + 1} из {totalPages}):\n{pairsText}",
+                        replyMarkup: inlineKeyboard
+                    );
+                    _currentPage[chatId] = message.MessageId; // Сохраняем ID сообщения
+                }
             }
-            else
+            catch (ApiRequestException ex) when (ex.Message.Contains("message to edit not found"))
             {
-                var message = await _clientBot.SendTextMessageAsync(chatId, $"Список связанных пар (страница {page + 1} из {totalPages}):\n{pairsText}", replyMarkup: inlineKeyboard);
-                _currentPage[chatId] = message.MessageId;
+                // Если сообщение не найдено (например, удалено), отправляем новое
+                var message = await _clientBot.SendTextMessageAsync(
+                    chatId,
+                    $"Список связанных пар (страница {page + 1} из {totalPages}):\n{pairsText}",
+                    replyMarkup: inlineKeyboard
+                );
+                _currentPage[chatId] = message.MessageId; // Обновляем ID сообщения
+            }
+            catch (ApiRequestException ex) when (ex.Message.Contains("message is not modified"))
+            {
+                // Игнорируем ошибку, если сообщение не изменилось
+                var message = await _clientBot.SendTextMessageAsync(
+                    chatId,
+                    $"Список связанных пар (страница {page + 1} из {totalPages}):\n{pairsText}",
+                    replyMarkup: inlineKeyboard
+                );
+                _currentPage[chatId] = message.MessageId; // Обновляем ID сообщения
             }
         }
 
