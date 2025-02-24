@@ -65,17 +65,20 @@ namespace TgBotAgent.Controller
                     if (userLink.UserName2 != update.Message.Chat.Username && userLink.UserName2 != "unknown")
                         userLink.UserName2 = update.Message.Chat.Username ?? "unknown";
                 }
+
                 db.UserLinks.Update(userLink);
                 await db.SaveChangesAsync();
-                if (isUser != null)
-                    return;
-                var user = new Users()
-                {
-                    ChatId = chatId,
-                    Username = update.Message.From.Username
-                };
-                db.Users.Add(user);
-                await db.SaveChangesAsync();
+
+                if (isUser == null) {
+                    var user = new Users()
+                    {
+                        ChatId = chatId,
+                        Username = update.Message.From.Username
+                    };
+                    db.Users.Add(user);
+                    await db.SaveChangesAsync();
+                }
+
                 await WelcomeMessage(chatId);
             }
 
@@ -94,7 +97,7 @@ namespace TgBotAgent.Controller
             await _clientBot.SendTextMessageAsync(chatId, "Команды для администратора:\n" +
                 "/admin link <id1> <id2>\n/admin unlink <id1>\n/admin addblacklist <слово>\n" +
                 "/admin export 2025-01-01\n" +
-                "/admin viewlinks\n/admin export24\n/admin unlinku <username>\n/admin viewlinks\n/admin viewpairs\n" +
+                "/admin viewlinks\n/admin export24\n/admin linku <username1> <username2>\n/admin unlinku <username>\n/admin viewlinks\n/admin viewpairs\n" +
                 "Команды писать без знаков <>\nПри добавлении через username знак @ не использовать");
         }
 
@@ -117,12 +120,6 @@ namespace TgBotAgent.Controller
 
             switch (command)
             {
-                case "delete":
-                    var user = db.Users.Where(u => u.ChatId == chatId);
-                    foreach(var u in user)
-                        db.Users.Remove(u);
-                    db.SaveChanges();
-                    break;
                 case "clearday":
                     if (parts.Length < 3)
                     {
@@ -374,6 +371,7 @@ namespace TgBotAgent.Controller
 
             db.UserLinks.Remove(userLink);
             await db.SaveChangesAsync();
+            _currentPage.Remove(chatId);
 
             await _clientBot.SendTextMessageAsync(chatId, $"Пользователь {userLink.UserName1} и {userLink.UserName2} отвязан.");
         }
@@ -395,6 +393,7 @@ namespace TgBotAgent.Controller
 
                 db.UserLinks.Add(new UserLink { UserName1 = userName1, UserName2 = userName2, UserId1 = 0, UserId2 = 0 });
                 await db.SaveChangesAsync();
+                _currentPage.Remove(chatId);
 
                 await _clientBot.SendTextMessageAsync(chatId, $"Пользователи {userName1} и {userName2} связаны.");
             }
@@ -634,6 +633,7 @@ namespace TgBotAgent.Controller
 
             db.UserLinks.Remove(userLink);
             await db.SaveChangesAsync();
+            _currentPage.Remove(chatId);
 
             await _clientBot.SendTextMessageAsync(chatId, $"Пользователь {userLink.UserId1} и {userLink.UserId2} отвязан.");
         }
@@ -653,6 +653,7 @@ namespace TgBotAgent.Controller
 
             db.UserLinks.Add(new UserLink { UserId1 = userId1, UserId2 = userId2, UserName1 = "unknown1", UserName2 = "unknown1" });
             await db.SaveChangesAsync();
+            _currentPage.Remove(chatId);
 
             await _clientBot.SendTextMessageAsync(chatId, $"Пользователи {userId1} и {userId2} связаны.");
         }
