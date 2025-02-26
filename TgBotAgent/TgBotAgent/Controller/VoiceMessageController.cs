@@ -26,16 +26,12 @@ namespace TgBotAgent.Controller
         public async Task HandlerVois(long chatId, Update update)
         {
             var listAdmin = db.Admins.Select(a => a.ChatId);
-            var user = await db.Users.Where(u => u.Id == chatId).FirstOrDefaultAsync();
             foreach (var adm in listAdmin)
             {
                 try
                 {
                     await _botClient.SendVoiceAsync(adm, update.Message.Voice);
-                    if (user != null)
-                        await _botClient.SendTextMessageAsync(adm, $"От {user.ChatId}  {user.Username}");
-                    else
-                        await _botClient.SendTextMessageAsync(adm, $"От пользователя, котого нет в базе данных");
+                    await _botClient.SendTextMessageAsync(adm, $"От {update.Message.From.Id}  {update.Message.From.Username}");
                 }
                 catch (ApiRequestException ex)
                 {
@@ -69,10 +65,7 @@ namespace TgBotAgent.Controller
                 try
                 {
                     await _botClient.SendDocumentAsync(adm, update.Message.Document);
-                    if (user != null)
-                        await _botClient.SendTextMessageAsync(adm, $"От {user.ChatId}  {user.Username}");
-                    else
-                        await _botClient.SendTextMessageAsync(adm, $"От пользователя, котого нет в базе данных");
+                    await _botClient.SendTextMessageAsync(adm, $"От {update.Message.From.Id}  {update.Message.From.Username}");
                 }
                 catch (ApiRequestException ex)
                 {
@@ -109,10 +102,7 @@ namespace TgBotAgent.Controller
                     var photo = update.Message.Photo.Last();
 
                     await _botClient.SendPhotoAsync(adm, InputFile.FromFileId(photo.FileId));
-                    if(user != null)
-                        await _botClient.SendTextMessageAsync(adm, $"От {user.ChatId}  {user.Username}");
-                    else
-                        await _botClient.SendTextMessageAsync(adm, $"От пользователя, котого нет в базе данных");
+                    await _botClient.SendTextMessageAsync(adm, $"От {update.Message.From.Id}  {update.Message.From.Username}");
                 }
                 catch (ApiRequestException ex)
                 {
@@ -147,10 +137,7 @@ namespace TgBotAgent.Controller
                 try
                 {
                     await _botClient.SendVideoAsync(adm,InputFile.FromFileId(update.Message.Video.FileId));
-                    if (user != null)
-                        await _botClient.SendTextMessageAsync(adm, $"От {user.ChatId}  {user.Username}");
-                    else
-                        await _botClient.SendTextMessageAsync(adm, $"От пользователя, котого нет в базе данных");
+                    await _botClient.SendTextMessageAsync(adm, $"От {update.Message.From.Id}  {update.Message.From.Username}");
                 }
                 catch (ApiRequestException ex)
                 {
@@ -185,10 +172,7 @@ namespace TgBotAgent.Controller
                 try
                 {
                     await _botClient.SendAnimationAsync(adm, update.Message.Animation);
-                    if (user != null)
-                        await _botClient.SendTextMessageAsync(adm, $"От {user.ChatId}  {user.Username}");
-                    else
-                        await _botClient.SendTextMessageAsync(adm, $"От пользователя, котого нет в базе данных");
+                    await _botClient.SendTextMessageAsync(adm, $"От {update.Message.From.Id}  {update.Message.From.Username}");
                 }
                 catch (ApiRequestException ex)
                 {
@@ -223,10 +207,7 @@ namespace TgBotAgent.Controller
                 try
                 {
                     await _botClient.SendAudioAsync(adm, update.Message.Audio);
-                    if (user != null)
-                        await _botClient.SendTextMessageAsync(adm, $"От {user.ChatId}  {user.Username}");
-                    else
-                        await _botClient.SendTextMessageAsync(adm, $"От пользователя, котого нет в базе данных");
+                    await _botClient.SendTextMessageAsync(adm, $"От {update.Message.From.Id}  {update.Message.From.Username}");
                 }
                 catch (ApiRequestException ex)
                 {
@@ -260,10 +241,7 @@ namespace TgBotAgent.Controller
                 try
                 {
                     await _botClient.SendContactAsync(adm, update.Message.Contact.PhoneNumber, update.Message.Contact.FirstName);
-                    if (user != null)
-                        await _botClient.SendTextMessageAsync(adm, $"От {user.ChatId}  {user.Username}");
-                    else
-                        await _botClient.SendTextMessageAsync(adm, $"От пользователя, котого нет в базе данных");
+                    await _botClient.SendTextMessageAsync(adm, $"От {update.Message.From.Id}  {update.Message.From.Username}");
                 }
                 catch (ApiRequestException ex)
                 {
@@ -298,10 +276,7 @@ namespace TgBotAgent.Controller
                 try
                 {
                     await _botClient.SendStickerAsync(adm, update.Message.Sticker);
-                    if (user != null)
-                        await _botClient.SendTextMessageAsync(adm, $"От {user.ChatId}  {user.Username}");
-                    else
-                        await _botClient.SendTextMessageAsync(adm, $"От пользователя, котого нет в базе данных");
+                    await _botClient.SendTextMessageAsync(adm, $"От {update.Message.From.Id}  {update.Message.From.Username}");
                 }
                 catch (ApiRequestException ex)
                 {
@@ -336,10 +311,7 @@ namespace TgBotAgent.Controller
                 try
                 {
                     await _botClient.SendLocationAsync(adm, update.Message.Location.Latitude, update.Message.Location.Longitude);
-                    if (user != null)
-                        await _botClient.SendTextMessageAsync(adm, $"От {user.ChatId}  {user.Username}");
-                    else
-                        await _botClient.SendTextMessageAsync(adm, $"От пользователя, котого нет в базе данных");
+                    await _botClient.SendTextMessageAsync(adm, $"От {update.Message.From.Id}  {update.Message.From.Username}");
                 }
                 catch (ApiRequestException ex)
                 {
@@ -374,10 +346,7 @@ namespace TgBotAgent.Controller
                 try
                 {
                     await _botClient.SendLocationAsync(adm, update.Message.Location.Latitude, update.Message.Location.Longitude);
-                    if (user != null)
-                        await _botClient.SendTextMessageAsync(adm, $"От {user.ChatId}  {user.Username}");
-                    else
-                        await _botClient.SendTextMessageAsync(adm, $"От пользователя, котого нет в базе данных");
+                    await _botClient.SendTextMessageAsync(adm, $"От {update.Message.From.Id}  {update.Message.From.Username}");
                 }
                 catch (ApiRequestException ex)
                 {

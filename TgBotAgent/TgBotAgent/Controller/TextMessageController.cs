@@ -25,65 +25,74 @@ namespace TgBotAgent.Controller
 
         internal async Task CheckUserOrAdmin(Update update)
         {
-            var chatId = update.Message.Chat.Id;
-            var isUser = await db.Users.Where(u => u.ChatId == chatId).FirstOrDefaultAsync();
-            var userLink = await db.UserLinks.Where(ul => ul.UserId1 == chatId || ul.UserId2 == chatId || ul.UserName1 == update.Message.Chat.Username || ul.UserName2 == update.Message.Chat.Username)
-                    .FirstOrDefaultAsync();
-            if (await IsAdmin(chatId))
+            try
             {
-                if (isUser == null) 
+                var chatId = update.Message.Chat.Id;
+                var isUser = await db.Users.Where(u => u.ChatId == chatId).FirstOrDefaultAsync();
+                var userLink = await db.UserLinks.Where(ul => ul.UserId1 == chatId || ul.UserId2 == chatId || ul.UserName1 == update.Message.Chat.Username || ul.UserName2 == update.Message.Chat.Username)
+                        .FirstOrDefaultAsync();
+                if (await IsAdmin(chatId))
                 {
-                    var userAdd = new Users()
+                    if (isUser == null)
                     {
-                        ChatId = chatId,
-                        Username = update.Message.From.Username
-                    };
-                    db.Users.Add(userAdd);
-                    await db.SaveChangesAsync();
+                        var userAdd = new Users()
+                        {
+                            ChatId = chatId,
+                            Username = update.Message.From.Username
+                        };
+                        db.Users.Add(userAdd);
+                        await db.SaveChangesAsync();
+                    }
+                    await AdminMenu(chatId);
                 }
-                await AdminMenu(chatId);
+                if (userLink != null)
+                {
+                    if (userLink.UserName1 == update.Message.Chat.Username)
+                    {
+                        if (userLink.UserId1 != chatId)
+                            userLink.UserId1 = chatId;
+                    }
+                    else if (userLink.UserName2 == update.Message.Chat.Username)
+                    {
+                        if (userLink.UserId2 != chatId)
+                            userLink.UserId2 = chatId;
+                    }
+                    else if (userLink.UserId1 == chatId)
+                    {
+                        if (userLink.UserName1 != update.Message.Chat.Username && userLink.UserName1 != "unknown")
+                            userLink.UserName1 = update.Message.Chat.Username ?? "unknown";
+                    }
+                    else if (userLink.UserId2 == chatId)
+                    {
+                        if (userLink.UserName2 != update.Message.Chat.Username && userLink.UserName2 != "unknown")
+                            userLink.UserName2 = update.Message.Chat.Username ?? "unknown";
+                    }
+
+                    db.UserLinks.Update(userLink);
+                    await db.SaveChangesAsync();
+
+                    if (isUser == null)
+                    {
+                        var user = new Users()
+                        {
+                            ChatId = chatId,
+                            Username = update.Message.From.Username
+                        };
+                        db.Users.Add(user);
+                        await db.SaveChangesAsync();
+                    }
+
+                    await WelcomeMessage(chatId);
+                }
+                else
+                {
+                    await _clientBot.SendTextMessageAsync(chatId, "Вы не связаны с другим пользователем.");
+                }
             }
-            if(userLink != null)
+            catch(Exception ex)
             {
-                if (userLink.UserName1 == update.Message.Chat.Username)
-                {
-                    if (userLink.UserId1 != chatId)
-                        userLink.UserId1 = chatId;
-                }
-                else if (userLink.UserName2 == update.Message.Chat.Username)
-                {
-                    if (userLink.UserId2 != chatId)
-                        userLink.UserId2 = chatId;
-                }
-                else if (userLink.UserId1 == chatId)
-                {
-                    if (userLink.UserName1 != update.Message.Chat.Username && userLink.UserName1 != "unknown")
-                        userLink.UserName1 = update.Message.Chat.Username ?? "unknown";
-                }
-                else if (userLink.UserId2 == chatId)
-                {
-                    if (userLink.UserName2 != update.Message.Chat.Username && userLink.UserName2 != "unknown")
-                        userLink.UserName2 = update.Message.Chat.Username ?? "unknown";
-                }
-
-                db.UserLinks.Update(userLink);
-                await db.SaveChangesAsync();
-
-                if (isUser == null) {
-                    var user = new Users()
-                    {
-                        ChatId = chatId,
-                        Username = update.Message.From.Username
-                    };
-                    db.Users.Add(user);
-                    await db.SaveChangesAsync();
-                }
-
-                await WelcomeMessage(chatId);
+                Console.WriteLine(ex.Message);
             }
-
-            await _clientBot.SendTextMessageAsync(chatId, "Вы не связаны с другим пользователем.");
-            return;
         }
 
         private async Task WelcomeMessage(long chatId)
@@ -95,7 +104,7 @@ namespace TgBotAgent.Controller
         private async Task AdminMenu(long chatId)
         {
             await _clientBot.SendTextMessageAsync(chatId, "Команды для администратора:\n" +
-                "/admin link <id1> <id2>\n/admin unlink <id1>\n/admin addblacklist <слово>\n" +
+                "/admin linku <id1> <id2>\n/admin unlinku <id>\n/admin addblacklist <слово>\n" +
                 "/admin export 2025-01-01\n" +
                 "/admin viewlinks\n/admin export24\n/admin linku <username1> <username2>\n/admin unlinku <username>\n/admin viewlinks\n/admin viewpairs\n" +
                 "Команды писать без знаков <>\nПри добавлении через username знак @ не использовать");
@@ -710,71 +719,98 @@ namespace TgBotAgent.Controller
 
         internal async Task HandleUserMessage(long chatId, Message message)
         {
-            var userLink = await db.UserLinks
-                .FirstOrDefaultAsync(ul => ul.UserId1 == chatId || ul.UserId2 == chatId);
-            var listAdmin = db.Admins.Select(a => a.ChatId);
-            var utcTargetDate = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Utc);
-            var blacklistWords = await db.BlacklistWords.ToListAsync();
-
-            if (userLink == null)
+            try
             {
-                await _clientBot.SendTextMessageAsync(chatId, "Вы не связаны с другим пользователем.");
-                return;
-            }
+                var userLink = await db.UserLinks
+                    .FirstOrDefaultAsync(ul => ul.UserId1 == chatId || ul.UserId2 == chatId);
+                var listAdmin = db.Admins.Select(a => a.ChatId);
+                var utcTargetDate = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Utc);
+                var blacklistWords = await db.BlacklistWords.ToListAsync();
 
-            // Определяем получателя
-            var toUserId = userLink.UserId1 == message.From.Id ? userLink.UserId2 : userLink.UserId1;
+                if (userLink == null)
+                {
+                    await _clientBot.SendTextMessageAsync(chatId, "Вы не связаны с другим пользователем.");
+                    return;
+                }
 
-            // Получаем username получателя
-            var toUser = await db.Users.FirstOrDefaultAsync(u => u.ChatId == toUserId);
-            var toUsername = toUser?.Username ?? "Unknown";
+                // Определяем получателя
+                var toUserId = userLink.UserId1 == message.From.Id ? userLink.UserId2 : userLink.UserId1;
 
-            // Сохраняем сообщение в базу данных
-            db.Messages.Add(new MessageRecord
-            {
-                FromUserId = message.From.Id,
-                FromUsername = message.From.Username,
-                ToUserId = toUserId,
-                ToUsername = toUsername,
-                Text = message.Text,
-                Timestamp = utcTargetDate
-            });
+                // Получаем username получателя
+                var toUser = await db.Users.FirstOrDefaultAsync(u => u.ChatId == toUserId);
+                var toUsername = toUser?.Username ?? "Unknown";
+
+                // Сохраняем сообщение в базу данных
+                db.Messages.Add(new MessageRecord
+                {
+                    FromUserId = message.From.Id,
+                    FromUsername = message.From.Username,
+                    ToUserId = toUserId,
+                    ToUsername = toUsername,
+                    Text = message.Text,
+                    Timestamp = utcTargetDate
+                });
 
                 await db.SaveChangesAsync();
 
-            // Проверка на черный список
-            if (blacklistWords.Any(word => message.Text.Contains(word.Word, StringComparison.OrdinalIgnoreCase)))
-            {
-                foreach (var adm in listAdmin)
+
+                // Проверка на черный список
+                if (blacklistWords.Any(word => message.Text.Contains(word.Word, StringComparison.OrdinalIgnoreCase)))
                 {
-                    try
+                    foreach (var adm in listAdmin)
                     {
-                        await _clientBot.SendTextMessageAsync(adm, $"⚠️ Сообщение от {chatId} содержит запрещенное слово:\n{message.Text}");
-                    }
-                    catch (ApiRequestException ex)
-                    {
-                        // Обработка ошибок
-                        if (ex.ErrorCode == 403)
+                        try
                         {
-                            Console.WriteLine($"Администратор {chatId} заблокировал бота.");
+                            await _clientBot.SendTextMessageAsync(adm, $"⚠️ Сообщение от {chatId} содержит запрещенное слово:\n{message.Text}");
                         }
-                        else if (ex.ErrorCode == 400)
+                        catch (ApiRequestException ex)
                         {
-                            Console.WriteLine($"Администратор {chatId} никогда не начинал диалог с ботом.");
+                            // Обработка ошибок
+                            if (ex.ErrorCode == 403)
+                            {
+                                await _clientBot.SendTextMessageAsync(adm, $"Администратор {chatId} заблокировал бота.");
+                                Console.WriteLine($"Администратор {chatId} заблокировал бота.");
+                            }
+                            else if (ex.ErrorCode == 400)
+                            {
+                                await _clientBot.SendTextMessageAsync(adm, $"Администратор {chatId} никогда не начинал диалог с ботом.");
+                                Console.WriteLine($"Администратор {chatId} никогда не начинал диалог с ботом.");
+                            }
+                            else
+                            {
+                                await _clientBot.SendTextMessageAsync(adm, $"Ошибка при отправке сообщения администратор {chatId}: {ex.Message}");
+                                Console.WriteLine($"Ошибка при отправке сообщения администратор {chatId}: {ex.Message}");
+                            }
                         }
-                        else
+                        catch (Exception ex)
                         {
-                            Console.WriteLine($"Ошибка при отправке сообщения администратору {chatId}: {ex.Message}");
+                            await _clientBot.SendTextMessageAsync(adm, $"Неизвестная ошибка при отправке сообщения администратору {chatId}: {ex.Message}");
+                            // Обработка других исключений
+                            Console.WriteLine($"Неизвестная ошибка при отправке сообщения администратору {chatId}: {ex.Message}");
                         }
-                    }
-                    catch (Exception ex)
-                    {
-                        // Обработка других исключений
-                        Console.WriteLine($"Неизвестная ошибка при отправке сообщения администратору {chatId}: {ex.Message}");
                     }
                 }
+                await _clientBot.SendTextMessageAsync(toUserId, message.Text);
             }
-            await _clientBot.SendTextMessageAsync(toUserId, message.Text);
+            catch(ApiRequestException ex) 
+            {
+                var listAdmin = db.Admins.Select(a => a.ChatId);
+                foreach (var adm in listAdmin)
+                {
+                    await _clientBot.SendTextMessageAsync(adm, $"Ошибка при отправке сообщения {chatId}: {ex.Message}");
+                }
+                Console.WriteLine($"Ошибка при отправке сообщения {chatId}: {ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                var listAdmin = db.Admins.Select(a => a.ChatId);
+                foreach (var adm in listAdmin)
+                {
+                    await _clientBot.SendTextMessageAsync(adm, $"Неизвестная ошибка при отправке сообщения администратору {chatId}: {ex.Message}");
+                }
+                // Обработка других исключений
+                Console.WriteLine($"Неизвестная ошибка при отправке сообщения администратору {chatId}: {ex.Message}");
+            }
         }
 
         public async Task BotClient_OnCallbackQuery(CallbackQuery e)
