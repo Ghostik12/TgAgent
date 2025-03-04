@@ -1,5 +1,6 @@
 ﻿using HtmlAgilityPack;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using PuppeteerSharp;
 using System.Text;
 
@@ -7,52 +8,104 @@ namespace ParserAli
 {
     internal class Program
     {
-        static async Task Main(string[] args)
-        {
-            var apiKey = "e1edb8f19acccfc7a70d1541d8fba30f";
-            var userHash = "s5tk7whzmfsqn4k70am2iov1z1nfqi9s";
-
-            var epnClient = new EpnApiClient(apiKey, userHash);
-
-            // Создаем запрос
-            var request = new EpnApiRequest
+            static async Task Main(string[] args)
             {
-                UserApiKey = apiKey,
-                UserHash = userHash,
-                Requests = new Dictionary<string, EpnApiActionRequest>
-            {
+                var apiKey = "e1edb8f19acccfc7a70d1541d8fba30f";
+                var userHash = "s5tk7whzmfsqn4k70am2iov1z1nfqi9s";
+
+                var epnClient = new EpnApiClient(apiKey, userHash);
+
+                // Указываем дату, относительно которой будем проверять товары
+                var targetDate = new DateTime(2025, 02, 04); // Например, 1 октября 2023 года
+
+                // Лимит товаров на один запрос
+                var limit = 10;
+                // Смещение для пагинации
+                var offset = 0;
+                // Флаг для остановки цикла
+                var found = false;
+
+                // Цикл будет выполняться, пока не найдем подходящий товар
+                while (!found)
                 {
-                    "search_request_1",
-                    new EpnApiActionRequest
+                    // Создаем запрос для поиска товаров
+                    var searchRequest = new EpnApiRequest
                     {
-                        Action = "search",
-                        Query = "phone",
-                        Limit = 1000,
-                        Offset = 0,
-                        Lang = "en",
-                        Currency = "USD"
+                        UserApiKey = apiKey,
+                        UserHash = userHash,
+                        Requests = new Dictionary<string, EpnApiActionRequest>
+                {
+                    {
+                        "search_request",
+                        new EpnApiActionRequest
+                        {
+                            Action = "search",
+                            Query = "телефон",
+                            Limit = limit,
+                            Offset = offset,
+                            Lang = "ru",
+                            Currency = "RUR",
+                            OrderBy = "added_at", // Сортировка по дате добавления
+                            OrderDirection = "desc" // Сначала новые товары
+                        }
                     }
                 }
-            }
-            };
+                    };
 
-            // Отправляем запрос
-            var response = await epnClient.SendRequestAsync(request);
+                    // Отправляем запрос на поиск
+                    var searchResponse = await epnClient.SendRequestAsync(searchRequest);
 
-            // Обрабатываем ответ
-            if (response.Error != null)
-            {
-                Console.WriteLine("Ошибка: " + response.Error);
-            }
-            else
-            {
-                Console.WriteLine("Ответ от API:");
-                Console.WriteLine(JsonConvert.SerializeObject(response.Results, Formatting.Indented));
+                    // Обрабатываем ответ
+                    if (searchResponse.Error != null)
+                    {
+                        Console.WriteLine("Ошибка при поиске: " + searchResponse.Error);
+                        return;
+                    }
+
+                    // Извлекаем результаты поиска
+                    var searchResults = searchResponse.Results["search_request"] as JObject;
+                    var offers = searchResults["offers"] as JArray;
+
+                    if (offers == null || offers.Count == 0)
+                    {
+                        Console.WriteLine("Товары не найдены.");
+                        return;
+                    }
+
+                    Console.WriteLine($"Проверено товаров: {offset + offers.Count}");
+
+                    // Фильтруем товары по дате добавления
+                    foreach (var offer in offers)
+                    {
+                        var addedAtStr = offer["added_at"]?.ToString(); // Дата добавления товара
+                        if (DateTime.TryParse(addedAtStr, out var addedAt))
+                        {
+                            if (addedAt >= targetDate)
+                            {
+                                // Найден подходящий товар
+                                Console.WriteLine($"\nНайден подходящий товар:");
+                                Console.WriteLine($"ID: {offer["id"]}, Название: {offer["name"]}, Цена: {offer["price"]} {offer["currency"]}, Дата добавления: {addedAt:yyyy-MM-dd}");
+                                found = true; // Останавливаем цикл
+                                break;
+                            }
+                            else
+                            {
+                                Console.WriteLine($"Товар {offer["id"]} добавлен {addedAt:yyyy-MM-dd} (не подходит)");
+                            }
+                        }
+                        else
+                        {
+                            Console.WriteLine($"Товар {offer["id"]} имеет некорректную дату добавления: {addedAtStr}");
+                        }
+                    }
+
+                    // Увеличиваем смещение для следующего запроса
+                    offset += limit;
+                }
             }
         }
-    }
 
-    public class EpnApiClient
+        public class EpnApiClient
     {
         private const string ApiUrl = "http://api.epn.bz/json";
         private readonly string _apiKey;
@@ -78,7 +131,7 @@ namespace ParserAli
         }
     }
 
-    // Модель для основного запроса
+    // Модели для запросов и ответов
     public class EpnApiRequest
     {
         [JsonProperty("user_api_key")]
@@ -94,7 +147,6 @@ namespace ParserAli
         public Dictionary<string, EpnApiActionRequest> Requests { get; set; }
     }
 
-    // Модель для действия (action)
     public class EpnApiActionRequest
     {
         [JsonProperty("action")]
@@ -126,9 +178,14 @@ namespace ParserAli
 
         [JsonProperty("price_max")]
         public double PriceMax { get; set; } = 1000000.0;
+
+        [JsonProperty("orderby")]
+        public string OrderBy { get; set; }
+
+        [JsonProperty("order_direction")]
+        public string OrderDirection { get; set; }
     }
 
-    // Модель для ответа
     public class EpnApiResponse
     {
         [JsonProperty("identified_as")]
