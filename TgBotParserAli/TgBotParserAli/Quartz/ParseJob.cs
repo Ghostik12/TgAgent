@@ -38,6 +38,11 @@ namespace TgBotParserAli.Quartz
                 orderBy: "added_at",
                 orderDirection: "desc"
             );
+            if (response.Contains("Ошибка") || response.Contains("Неизвестная")) 
+            {
+                Console.WriteLine(response);
+                return;
+            }
 
             try
             {

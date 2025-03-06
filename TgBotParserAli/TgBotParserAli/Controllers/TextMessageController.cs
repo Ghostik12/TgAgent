@@ -226,9 +226,13 @@ namespace TgBotParserAli.Controllers
                             await _dbContext.SaveChangesAsync(); // Запускаем таймеры
                             break;
                         case "🗑 Удалить канал":
-                            _dbContext.Channels.Remove(channel);
                             var prod = _dbContext.Products.Where(p => p.Id == channel.Id);
+                            foreach (var pro in prod)
+                            {
+                                _dbContext.Products.Remove(pro);
+                            }
                             _scheduler.RemoveTimers(channel.Id);
+                            _dbContext.Channels.Remove(channel);
                             await _dbContext.SaveChangesAsync(); // Удаляем таймеры
                             break;
                     }

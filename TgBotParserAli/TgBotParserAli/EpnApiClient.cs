@@ -19,36 +19,58 @@ namespace TgBotParserAli
 
         public async Task<string> SearchProductsAsync(string query, int limit, int offset = 0, string orderBy = "added_at", string orderDirection = "desc")
         {
-            using var httpClient = new HttpClient();
-            var request = new
+            try
             {
-                user_api_key = _apiKey,
-                user_hash = _userHash,
-                api_version = "2",
-                lang = "ru",
-                requests = new
+                using var httpClient = new HttpClient();
+                var request = new
                 {
-                    search_request = new
+                    user_api_key = _apiKey,
+                    user_hash = _userHash,
+                    api_version = "2",
+                    lang = "ru",
+                    requests = new
                     {
-                        action = "search",
-                        query,
-                        limit,
-                        offset,
-                        currency = "RUR",
-                        lang = "ru",
-                        orderby = orderBy,       // Параметр сортировки
-                        order_direction = orderDirection // Направление сортировки
-                    }
-                },
-            };
+                        search_request = new
+                        {
+                            action = "search",
+                            query,
+                            limit,
+                            offset,
+                            currency = "RUR",
+                            lang = "ru",
+                            orderby = orderBy,
+                            order_direction = orderDirection
+                        }
+                    },
+                };
 
-            var json = JsonConvert.SerializeObject(request);
-            var content = new StringContent(json, Encoding.UTF8, "application/json");
+                var json = JsonConvert.SerializeObject(request);
+                var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-            var response = await httpClient.PostAsync(ApiUrl, content);
-            response.EnsureSuccessStatusCode();
+                var response = await httpClient.PostAsync(ApiUrl, content);
+                response.EnsureSuccessStatusCode();
 
-            return await response.Content.ReadAsStringAsync();
+                var result = await response.Content.ReadAsStringAsync();
+                return result; // Успешный запрос, ошибок нет
+            }
+            catch (HttpRequestException ex)
+            {
+                string errorMessage = $"Ошибка HTTP-запроса: {ex.Message}";
+                Console.WriteLine(errorMessage); // Логируем ошибку
+                return errorMessage;
+            }
+            catch (JsonSerializationException ex)
+            {
+                string errorMessage = $"Ошибка десериализации JSON: {ex.Message}";
+                Console.WriteLine(errorMessage); // Логируем ошибку
+                return errorMessage;
+            }
+            catch (Exception ex)
+            {
+                string errorMessage = $"Неизвестная ошибка: {ex.Message}";
+                Console.WriteLine(errorMessage); // Логируем ошибку
+                return errorMessage;
+            }
         }
     }
 }
