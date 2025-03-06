@@ -17,9 +17,9 @@ namespace TgBotParserAli.Models
         public int ParsedCount { get; set; }
         public int PostedToday { get; set; }
         public int FailedPosts { get; set; }
+        public bool UseShortLinks { get; set; } // Новое поле
         public List<Product> Products { get; set; } = new List<Product>(); // Список товаров
-                                                                           // Связь с KeywordStat
-        public List<KeywordStat> KeywordStats { get; set; } = new List<KeywordStat>();
+        public List<KeywordStat> KeywordStats { get; set; } = new List<KeywordStat>();// Связь с KeywordStat
         public List<KeywordSetting> KeywordSettings { get; set; } = new List<KeywordSetting>();
     }
 }

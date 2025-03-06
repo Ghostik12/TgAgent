@@ -13,15 +13,17 @@ namespace TgBotParserAli.Quartz
         private readonly Dictionary<int, Timer> _postTimers = new Dictionary<int, Timer>();
         private readonly IServiceScopeFactory _scopeFactory;
         private readonly EpnApiClient _epnApiClient;
+        private readonly VkLinkShortener _vkLinkShortener;
 
         // Очереди для задач парсинга и постинга
         private readonly ConcurrentQueue<(Channel channel, KeywordSetting keywordSetting)> _parseQueue = new ConcurrentQueue<(Channel, KeywordSetting)>();
         private readonly ConcurrentQueue<(Channel channel, KeywordSetting keywordSetting)> _postQueue = new ConcurrentQueue<(Channel, KeywordSetting)>();
 
-        public Scheduler(IServiceScopeFactory scopeFactory, EpnApiClient epnApiClient)
+        public Scheduler(IServiceScopeFactory scopeFactory, EpnApiClient epnApiClient, VkLinkShortener vkLinkShortener)
         {
             _scopeFactory = scopeFactory;
             _epnApiClient = epnApiClient;
+            _vkLinkShortener = vkLinkShortener;
         }
 
         public void StartAllTimers()
@@ -135,7 +137,7 @@ namespace TgBotParserAli.Quartz
             {
                 var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                 var botClient = scope.ServiceProvider.GetRequiredService<ITelegramBotClient>();
-                var postJob = new PostJob(dbContext, botClient);
+                var postJob = new PostJob(dbContext, botClient, _vkLinkShortener);
 
                 if (channel != null)
                 {

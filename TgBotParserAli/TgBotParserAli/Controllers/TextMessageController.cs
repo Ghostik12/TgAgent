@@ -7,6 +7,7 @@ using Telegram.Bot.Types.ReplyMarkups;
 using TgBotParserAli.DB;
 using TgBotParserAli.Models;
 using TgBotParserAli.Quartz;
+using static Microsoft.EntityFrameworkCore.DbLoggerCategory.Database;
 
 namespace TgBotParserAli.Controllers
 {
@@ -112,6 +113,10 @@ namespace TgBotParserAli.Controllers
                     case "Изменить партнерскую ссылку":
                         await HandleChangeRequest(update.Message.From.Id, update.Message.Text);
                         break;
+                    case "Включить сокращение ссылок":
+                    case "Отключить сокращение ссылок":
+                        await ToggleUseShortLinks(update.Message.From.Id, update.Message.Text);
+                        break;
                     case "Изменить ключевые слова":
                         if (_pendingChange.Channel != null)
                         {
@@ -129,6 +134,36 @@ namespace TgBotParserAli.Controllers
                         await CheckMessage(update.Message.From.Id, update.Message.Text);
                         break;
                 }
+            }
+        }
+
+        private async Task ToggleUseShortLinks(long chatId, string? command)
+        {
+            using (var scope = _scopeFactory.CreateScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+                var channel = _pendingChange.Channel;
+
+                if (channel == null)
+                {
+                    await _client.SendTextMessageAsync(chatId, "Канал не выбран.");
+                    return;
+                }
+
+                // Определяем новое значение UseShortLinks
+                bool newValue = command == "Включить сокращение ссылок";
+
+                // Обновляем значение в базе данных
+                channel.UseShortLinks = newValue;
+                dbContext.Channels.Update(channel);
+                await dbContext.SaveChangesAsync();
+
+                // Уведомляем пользователя
+                await _client.SendTextMessageAsync(chatId, $"Сокращение ссылок {(newValue ? "включено" : "отключено")} для канала {channel.Name}.");
+
+                // Возвращаем пользователя в меню настройки канала
+                await ShowChannelSettings(chatId, channel);
             }
         }
 
@@ -227,10 +262,9 @@ namespace TgBotParserAli.Controllers
                             break;
                         case "🗑 Удалить канал":
                             var prod = _dbContext.Products.Where(p => p.Id == channel.Id);
-                            foreach (var pro in prod)
-                            {
-                                _dbContext.Products.Remove(pro);
-                            }
+                            var stat = _dbContext.KeywordStats.Where(ks => ks.ChannelId == channel.Id);
+                            foreach (var p in stat) { _dbContext.KeywordStats.Remove(p); }
+                            foreach (var pro in prod) { _dbContext.Products.Remove(pro);}
                             _scheduler.RemoveTimers(channel.Id);
                             _dbContext.Channels.Remove(channel);
                             await _dbContext.SaveChangesAsync(); // Удаляем таймеры
@@ -433,6 +467,7 @@ namespace TgBotParserAli.Controllers
                 new[] { new KeyboardButton("Изменить диапазон цен") },
                 new[] { new KeyboardButton("Изменить партнерскую ссылку") },
                 new[] { new KeyboardButton("Изменить ключевые слова") },
+                new[] { new KeyboardButton(channel.UseShortLinks ? "Отключить сокращение ссылок" : "Включить сокращение ссылок") },
                 new[] { new KeyboardButton(channel.IsActive ? "⏸ Остановить канал" : "▶️ Запустить канал") },
                 new[] { new KeyboardButton("🗑 Удалить канал") },
                 new[] { new KeyboardButton("Назад") }
@@ -445,6 +480,7 @@ namespace TgBotParserAli.Controllers
                 $"Количество товаров: {channel.ParseCount}\n" + 
                 $"Максимальное количество постов: {channel.MaxPostsPerDay}\n" +
                 $"Диапазон цен: {channel.MinPrice} - {channel.MaxPrice}\n" +
+                $"Сокращение ссылок: {(channel.UseShortLinks ? "Включено" : "Отключено")}\n" +
                 $"Статус: {(channel.IsActive ? "Активен" : "Остановлен")}", replyMarkup: menu);
         }
 
@@ -471,6 +507,7 @@ namespace TgBotParserAli.Controllers
                                 MaxPrice = decimal.Parse(parts[5].Trim()),
                                 ReferralLink = FormatReferralLink(parts[6].Trim()),
                                 IsActive = true,
+                                UseShortLinks = false
                             };
 
                             // Обрабатываем ключевые слова и их настройки
@@ -547,6 +584,10 @@ namespace TgBotParserAli.Controllers
                 chatId: chatId,
                 text: "🗄Главное меню:",
                 replyMarkup: replyKeyboard);
+
+            // Очищаем переменные
+            _pendingChange = (null, null);
+            _changeWords = (null, null);
         }
 
         internal async Task BotClient_OnCallbackQuery(CallbackQuery? callbackQuery)
