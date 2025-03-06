@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using TgBotParserAli.DB;
@@ -12,9 +13,11 @@ using TgBotParserAli.DB;
 namespace TgBotParserAli.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20250306094954_Queue")]
+    partial class Queue
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -48,12 +51,6 @@ namespace TgBotParserAli.Migrations
                             Id = 1,
                             ChatId = 1451999567L,
                             UserName = "faust_harric"
-                        },
-                        new
-                        {
-                            Id = 2,
-                            ChatId = 292720339L,
-                            UserName = "admin"
                         });
                 });
 

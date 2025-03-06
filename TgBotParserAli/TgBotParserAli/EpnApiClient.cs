@@ -1,6 +1,7 @@
 ﻿using Microsoft.CSharp.RuntimeBinder;
 using Newtonsoft.Json;
 using System.Text;
+using TgBotParserAli.Models;
 
 namespace TgBotParserAli
 {

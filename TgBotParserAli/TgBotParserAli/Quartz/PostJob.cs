@@ -10,102 +10,101 @@ namespace TgBotParserAli.Quartz
 {
     public class PostJob
     {
-        private readonly AppDbContext _dbContext;
         private readonly ITelegramBotClient _botClient;
-        private bool _isRunning = false; // Флаг для блокировки
-        private CancellationTokenSource _cancellationTokenSource; // Источник токена отмены
+        private readonly AppDbContext _dbContext;
 
-        public PostJob(AppDbContext dbContext, ITelegramBotClient botClient)
+        public PostJob(AppDbContext appDbContext, ITelegramBotClient botClient)
         {
-            _dbContext = dbContext;
+            _dbContext = appDbContext;
             _botClient = botClient;
         }
 
-        public async Task Execute(Channel channel)
+        public async Task Execute(Channel channel, KeywordSetting keywordSetting)
         {
-            // Если задача уже выполняется, пропускаем новый запуск
-            if (_isRunning || !channel.IsActive) // Добавлена проверка на IsActive
+            if (!channel.IsActive || !keywordSetting.IsPosting)
             {
-                Console.WriteLine("Задача уже выполняется или канал остановлен. Пропускаем запуск.");
-                return;
+                return; // Пропускаем неактивные каналы или ключевые слова
             }
-            try
+
+            Console.WriteLine($"Постинг товаров для канала {channel.Name}...");
+
+            // Получаем товары для текущего ключевого слова
+            var products = await _dbContext.Products
+                .Where(p => p.ChannelId == channel.Id && !p.IsPosted && p.Keyword == keywordSetting.Keyword)
+                .ToListAsync();
+
+            foreach (var product in products)
             {
-                _isRunning = true; // Блокируем задачу
-                _cancellationTokenSource = new CancellationTokenSource(); // Создаем новый токен отмены
-
-                var cancellationToken = _cancellationTokenSource.Token;
-
-                Console.WriteLine($"Постинг товаров для канала {channel.Name}...");
-
-                // Получаем товары, которые ещё не были опубликованы
-                var products = await _dbContext.Products
-                    .Where(p => p.ChannelId == channel.Id && !p.IsPosted)
-                    .Take(channel.MaxPostsPerDay) // Ограничиваем количество постов
-                    .ToListAsync();
-
-                foreach (var product in products)
+                try
                 {
-                    try
+                    // Проверяем, не достигнут ли лимит постов за день
+                    if (channel.PostedToday >= channel.MaxPostsPerDay)
                     {
-                        // Проверяем, не была ли задача отменена
-                        cancellationToken.ThrowIfCancellationRequested();
+                        Console.WriteLine($"Лимит постов за день достигнут для канала {channel.Name}.");
+                        break;
+                    }
+                    // Формируем сообщение
+                    var message = $"<b>{product.Name}</b>\n" +
+                                  $"Цена: <s>{product.Price}</s> {product.DiscountedPrice} RUB\n" +
+                                  $"{channel.ReferralLink}{product.ProductId}.html";
 
-                        // Формируем сообщение
-                        var message = $"<b>{product.Name}</b>\n" +
-                                      $"Цена: <s>{product.Price}</s> {product.DiscountedPrice} RUB\n" +
-                                      $"{channel.ReferralLink}{product.ProductId}.html";
-                        if (product.Images != null)
+                    if (product.Images != null && product.Images.Any())
+                    {
+                        var mediaGroup = new List<InputMediaPhoto>();
+
+                        // Первое фото с текстом (подписью)
+                        mediaGroup.Add(new InputMediaPhoto(product.Images.First())
                         {
-                            // Отправляем фото и описание
-                            var mediaGroup = product.Images
-                                .Select(image => new InputMediaPhoto(image))
-                                .ToList();
+                            Caption = message,
+                            ParseMode = ParseMode.Html
+                        });
 
-
-                            // Отправляем медиагруппу
-                            await _botClient.SendMediaGroupAsync(channel.ChatId, mediaGroup);
+                        // Остальные фото (без текста)
+                        foreach (var image in product.Images.Skip(1))
+                        {
+                            mediaGroup.Add(new InputMediaPhoto(image));
                         }
 
-                        // Отправляем текстовое сообщение
+                        // Отправляем медиагруппу
+                        await _botClient.SendMediaGroupAsync(
+                            chatId: channel.ChatId,
+                            media: mediaGroup);
+                    }
+                    else
+                    {
+                        // Если нет фото, отправляем только текст
                         await _botClient.SendTextMessageAsync(
                             chatId: channel.ChatId,
                             text: message,
                             parseMode: ParseMode.Html);
-
-                        // Помечаем товар как опубликованный
-                        product.IsPosted = true;
-
-                        // Сохраняем изменения
-                        await _dbContext.SaveChangesAsync();
-
-                        // Добавляем задержку, основанную на частоте постинга
-                        Console.WriteLine($"Ожидание {channel.PostFrequency} до следующего поста...");
-                        await Task.Delay(channel.PostFrequency);
                     }
-                    catch (ApiRequestException ex)
-                    {
-                        Console.WriteLine($"Ошибка при отправке товара {product.Name}: {ex.Message}");
-                        // Пропускаем этот товар и продолжаем с остальными
-                    }
+
+                    // Помечаем товар как опубликованный
+                    product.IsPosted = true;
+                    _dbContext.Products.Update(product);
+
+                    // Увеличиваем счетчик опубликованных постов за день
+                    channel.PostedToday++;
+                    _dbContext.Channels.Update(channel);
+
+                    // Сохраняем изменения
+                    await _dbContext.SaveChangesAsync();
+
+                    // Ждем перед постингом следующего товара
+                    await Task.Delay(keywordSetting.PostFrequency);
                 }
-
-                Console.WriteLine($"Постинг завершен. Опубликовано {products.Count} товаров.");
+                catch (ApiRequestException ex)
+                {
+                    Console.WriteLine($"Ошибка при отправке товара {product.Name}: {ex.Message}");
+                    channel.FailedPosts++; // Увеличиваем счетчик неудачных постов
+                    await _dbContext.SaveChangesAsync();
+                }
+                catch(Exception ex)
+                {
+                    Console.WriteLine(ex.Message);
+                }
             }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Ошибка при выполнении постинга: {ex.Message}");
-            }
-            finally
-            {
-                _isRunning = false; // Разблокируем задачу
-            }
-        }
-
-        // Метод для отмены задачи
-        public void Cancel()
-        {
-            _cancellationTokenSource?.Cancel();
         }
     }
+
 }

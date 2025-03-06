@@ -9,6 +9,8 @@ namespace TgBotParserAli.DB
         public DbSet<Channel> Channels { get; set; }
         public DbSet<Product> Products { get; set; }
         public DbSet<Admins> Admin { get; set; }
+        public DbSet<KeywordSetting> KeywordSettings { get; set; }
+        public DbSet<KeywordStat> KeywordStats { get; set; }
 
         public AppDbContext()
         {
@@ -32,20 +34,10 @@ namespace TgBotParserAli.DB
             modelBuilder.Entity<Admins>().HasData(
                 new Admins { Id = 1, ChatId = 1451999567, UserName = "faust_harric" }
             );
-
-            modelBuilder.Entity<Channel>()
-                .Property(c => c.ParseFrequency)
-                .HasConversion(
-                    v => v.ToString(), // Преобразуем TimeSpan в строку
-                    v => TimeSpan.Parse(v) // Преобразуем строку в TimeSpan
-                );
-
-            modelBuilder.Entity<Channel>()
-                .Property(c => c.PostFrequency)
-                .HasConversion(
-                    v => v.ToString(), // Преобразуем TimeSpan в строку
-                    v => TimeSpan.Parse(v) // Преобразуем строку в TimeSpan
-                );
+            // Добавляем начальные данные
+            modelBuilder.Entity<Admins>().HasData(
+                new Admins { Id = 2, ChatId = 292720339, UserName = "admin" }
+            );
         }
     }
 

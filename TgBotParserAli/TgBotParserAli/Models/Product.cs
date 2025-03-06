@@ -14,5 +14,6 @@ namespace TgBotParserAli.Models
         public int ChannelId { get; set; } // Внешний ключ на канал
         public Channel Channel { get; set; } // Навигационное свойство
         public string Url { get; set; } // Ссылка на товар
+        public string Keyword { get; set; } // Ключевое слово
     }
 }
