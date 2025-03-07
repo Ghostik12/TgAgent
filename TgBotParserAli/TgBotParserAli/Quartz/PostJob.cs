@@ -13,65 +13,87 @@ namespace TgBotParserAli.Quartz
         private readonly ITelegramBotClient _botClient;
         private readonly AppDbContext _dbContext;
         private readonly VkLinkShortener _linkShortener;
+        private readonly DbContextOptions<AppDbContext> _dbContextOptions;
+        private static readonly SemaphoreSlim _semaphore = new SemaphoreSlim(1, 1);
 
-        public PostJob(AppDbContext appDbContext, ITelegramBotClient botClient, VkLinkShortener linkShortener)
+        public PostJob(AppDbContext appDbContext, ITelegramBotClient botClient, VkLinkShortener linkShortener, DbContextOptions<AppDbContext> dbContextOptions)
         {
             _dbContext = appDbContext;
             _botClient = botClient;
             _linkShortener = linkShortener;
+            _dbContextOptions = dbContextOptions;
         }
 
         public async Task Execute(Channel channel, KeywordSetting keywordSetting)
         {
-            if (!channel.IsActive || !keywordSetting.IsPosting)
+            await _semaphore.WaitAsync();
+            try
             {
-                return; // Пропускаем неактивные каналы или ключевые слова
-            }
-
-            Console.WriteLine($"Постинг товаров для канала {channel.Name}...");
-
-            // Получаем товары для текущего ключевого слова
-            var products = await _dbContext.Products
-                .Where(p => p.ChannelId == channel.Id && !p.IsPosted && p.Keyword == keywordSetting.Keyword)
-                .ToListAsync();
-
-            foreach (var product in products)
-            {
-                try
+                using (var dbContext = new AppDbContext(_dbContextOptions)) // Передайте _dbContextOptions в конструктор PostJob
                 {
-                    // Проверяем, не достигнут ли лимит постов за день
-                    if (channel.PostedToday >= channel.MaxPostsPerDay)
+                    if (!channel.IsActive || !keywordSetting.IsPosting)
                     {
-                        Console.WriteLine($"Лимит постов за день достигнут для канала {channel.Name}.");
-                        break;
+                        return; // Пропускаем неактивные каналы или ключевые слова
                     }
-                    // Отправляем сообщение с товаром
-                    await SendProductMessageAsync(channel, product, _botClient, _linkShortener);
 
-                    // Помечаем товар как опубликованный
-                    product.IsPosted = true;
-                    _dbContext.Products.Update(product);
+                    Console.WriteLine($"Постинг товаров для канала {channel.Name}...");
 
-                    // Увеличиваем счетчик опубликованных постов за день
-                    channel.PostedToday++;
-                    _dbContext.Channels.Update(channel);
+                    // Получаем товары для текущего ключевого слова
+                    var products = await dbContext.Products
+                        .AsNoTracking()
+                        .Where(p => !p.IsPosted && p.Keyword == keywordSetting.Keyword)
+                        .ToListAsync();
 
-                    // Сохраняем изменения
-                    await _dbContext.SaveChangesAsync();
+                    if (!products.Any())
+                    {
+                        Console.WriteLine($"Нет товаров для постинга в канале {channel.Name} (ключевое слово: {keywordSetting.Keyword}).");
+                        return;
+                    }
 
-                    // Ждем перед постингом следующего товара
-                    await Task.Delay(keywordSetting.PostFrequency);
+                    // Выбираем случайный товар
+                    var random = new Random();
+                    var product = products[random.Next(products.Count)];
+
+                    try
+                    {
+                        // Проверяем, не достигнут ли лимит постов за день
+                        if (channel.PostedToday >= channel.MaxPostsPerDay)
+                        {
+                            Console.WriteLine($"Лимит постов за день достигнут для канала {channel.Name}.");
+                            return;
+                        }
+
+                        // Отправляем сообщение с товаром
+                        await SendProductMessageAsync(channel, product, _botClient, _linkShortener);
+
+                        // Помечаем товар как опубликованный
+                        product.IsPosted = true;
+                        dbContext.Products.Update(product);
+
+                        // Увеличиваем счетчик опубликованных постов за день
+                        channel.PostedToday++;
+                        dbContext.Channels.Update(channel);
+
+                        // Сохраняем изменения
+                        await dbContext.SaveChangesAsync();
+
+                        Console.WriteLine($"Товар {product.Name} успешно опубликован.");
+                    }
+                    catch (ApiRequestException ex)
+                    {
+                        Console.WriteLine($"Ошибка при отправке товара {product.Name}: {ex.Message}");
+                        channel.FailedPosts++; // Увеличиваем счетчик неудачных постов
+                        await dbContext.SaveChangesAsync();
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine(ex.Message);
+                    }
                 }
-                catch (ApiRequestException ex)
-                {
-                    Console.WriteLine($"Ошибка при отправке товара {product.Name}: {ex.Message}");
-                    channel.FailedPosts++; // Увеличиваем счетчик неудачных постов
-                    await _dbContext.SaveChangesAsync();
-                }
-                catch(Exception ex)
-                {
-                    Console.WriteLine(ex.Message);
-                }
+            }
+            finally 
+            {
+                _semaphore.Release();
             }
         }
 

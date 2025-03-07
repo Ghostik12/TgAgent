@@ -7,7 +7,6 @@ using Telegram.Bot.Types.ReplyMarkups;
 using TgBotParserAli.DB;
 using TgBotParserAli.Models;
 using TgBotParserAli.Quartz;
-using static Microsoft.EntityFrameworkCore.DbLoggerCategory.Database;
 
 namespace TgBotParserAli.Controllers
 {
@@ -59,12 +58,17 @@ namespace TgBotParserAli.Controllers
 
         internal async Task Handle(Update update, CancellationToken cancellationToken)
         {
+            if (update.Message == null)
+            {
+                Console.WriteLine("Сообщение не содержит данных.");
+                return;
+            }
             using (var scope = _scopeFactory.CreateScope())
             {
                 var _dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
                 var messageText = update.Message.Text;
-                var yorn = CheckAdmins(update);
+                var yorn = await CheckAdmins(update);
                 if (yorn == false)
                     return;
 
@@ -94,6 +98,21 @@ namespace TgBotParserAli.Controllers
                         break;
                     case "🧹Очистить таблицу товаров":
                         await ClearProductsTable(update.Message.From.Id);
+                        break;
+                    case "🗑 Удалить канал":
+                        var channel = _pendingChange.Channel;
+                        var chatId = update.Message.From.Id;
+                        await DeleteChannel(chatId, channel);
+                        break;
+                    case "▶️ Запустить канал":
+                        var channelS = _pendingChange.Channel;
+                        var chatIdS = update.Message.From.Id;
+                        await StartChannel(chatIdS, channelS);
+                        break;
+                    case "⏸ Остановить канал":
+                        var channelStop = _pendingChange.Channel;
+                        var chatIdStop = update.Message.From.Id;
+                        await StopChannel(chatIdStop, channelStop);
                         break;
                     case "Изменить частоту парсинга":
                         await HandleChangeRequest(update.Message.From.Id, update.Message.Text);
@@ -134,6 +153,53 @@ namespace TgBotParserAli.Controllers
                         await CheckMessage(update.Message.From.Id, update.Message.Text);
                         break;
                 }
+            }
+        }
+
+        private async Task StopChannel(long chatId, Channel channel)
+        {
+            using (var scope = _scopeFactory.CreateScope())
+            {
+                var _dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                channel.IsActive = false;
+                _scheduler.RemoveTimers(channel.Id);
+                _dbContext.Channels.Update(channel);
+                await _dbContext.SaveChangesAsync(); // Останавливаем таймеры
+                await _client.SendTextMessageAsync(chatId, $"Канал {channel.Name} остановлен.");
+            }
+        }
+
+        private async Task StartChannel(long chatId, Channel channel)
+        {
+            using (var scope = _scopeFactory.CreateScope())
+            {
+                var _dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                channel.IsActive = true;
+                _scheduler.ScheduleJobsForChannel(channel);
+                _dbContext.Channels.Update(channel);
+                await _dbContext.SaveChangesAsync();
+                await _client.SendTextMessageAsync(chatId, $"Канал {channel.Name} запущен.");
+            }
+        }
+
+        private async Task DeleteChannel(long chatId, Channel channel)
+        {
+            using (var scope = _scopeFactory.CreateScope())
+            {
+                var _dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                _scheduler.RemoveTimers(channel.Id);
+                // Удаляем все связанные данные
+                var products = _dbContext.Products.Where(p => p.ChannelId == channel.Id).ToList();
+                var stats = _dbContext.KeywordStats.Where(ks => ks.ChannelId == channel.Id).ToList();
+                var keywordSettings = _dbContext.KeywordSettings.Where(k => k.ChannelId == channel.Id).ToList();
+
+                _dbContext.Products.RemoveRange(products);
+                _dbContext.KeywordStats.RemoveRange(stats);
+                _dbContext.KeywordSettings.RemoveRange(keywordSettings);
+                _dbContext.Channels.Remove(channel);
+
+                await _dbContext.SaveChangesAsync();
+                await _client.SendTextMessageAsync(chatId, $"Канал {channel.Name} удален.");
             }
         }
 
@@ -197,18 +263,6 @@ namespace TgBotParserAli.Controllers
                     await AddChannel(chatId, text);
                     _isAddingChannel = false;
                 }
-                else if (_pendingChange.Channel != null && text.Contains("Остановить"))
-                {
-                    await ApplyChange(chatId, text);
-                }
-                else if (_pendingChange.Channel != null && text.Contains("Запустить"))
-                {
-                    await ApplyChange(chatId, text);
-                }
-                else if (_pendingChange.Channel != null && text.Contains("Удалить"))
-                {
-                    await ApplyChange(chatId, text);
-                }
                 else if(_changeWords.ChangeType != null && _changeWords.Channel != null)
                 {
                     await ApplyChange(chatId, text);
@@ -246,32 +300,8 @@ namespace TgBotParserAli.Controllers
                 }
                 // Останавливаем старые таймеры для этого канала
                 _scheduler.RemoveTimers(channel.Id);
-                if (newValue.Contains("Удалить") || newValue.Contains("Запустить") || newValue.Contains("Остановить"))
-                {
-                    switch (newValue)
-                    {
-                        case "⏸ Остановить канал":
-                            channel.IsActive = false;
-                            _scheduler.RemoveTimers(channel.Id);
-                            await _dbContext.SaveChangesAsync(); // Останавливаем таймеры
-                            break;
-                        case "▶️ Запустить канал":
-                            channel.IsActive = true;
-                            _scheduler.ScheduleJobsForChannel(channel);
-                            await _dbContext.SaveChangesAsync(); // Запускаем таймеры
-                            break;
-                        case "🗑 Удалить канал":
-                            var prod = _dbContext.Products.Where(p => p.Id == channel.Id);
-                            var stat = _dbContext.KeywordStats.Where(ks => ks.ChannelId == channel.Id);
-                            foreach (var p in stat) { _dbContext.KeywordStats.Remove(p); }
-                            foreach (var pro in prod) { _dbContext.Products.Remove(pro);}
-                            _scheduler.RemoveTimers(channel.Id);
-                            _dbContext.Channels.Remove(channel);
-                            await _dbContext.SaveChangesAsync(); // Удаляем таймеры
-                            break;
-                    }
-                }
-                else if (keywords != null && type != null)
+
+                if (keywords != null && type != null)
                 {
                     switch (type)
                     {
@@ -423,14 +453,17 @@ namespace TgBotParserAli.Controllers
             }
         }
 
-        private bool CheckAdmins(Update update)
+        private async Task<bool> CheckAdmins(Update update)
         {
             using (var scope = _scopeFactory.CreateScope())
             {
                 var _dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-                var admin = _dbContext.Admin.FirstOrDefault(a => a.ChatId == update.Message.From.Id);
-                return admin != null;
+                var admin = await _dbContext.Admin.FirstOrDefaultAsync(a => a.ChatId == update.Message.From.Id);
+                if (admin != null)
+                    return true;
+                else
+                    return false;
             }
         }
 

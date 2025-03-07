@@ -14,16 +14,18 @@ namespace TgBotParserAli.Quartz
         private readonly IServiceScopeFactory _scopeFactory;
         private readonly EpnApiClient _epnApiClient;
         private readonly VkLinkShortener _vkLinkShortener;
+        private readonly DbContextOptions<AppDbContext> _dbContextOptions;
 
         // Очереди для задач парсинга и постинга
-        private readonly ConcurrentQueue<(Channel channel, KeywordSetting keywordSetting)> _parseQueue = new ConcurrentQueue<(Channel, KeywordSetting)>();
-        private readonly ConcurrentQueue<(Channel channel, KeywordSetting keywordSetting)> _postQueue = new ConcurrentQueue<(Channel, KeywordSetting)>();
+        private ConcurrentQueue<(Channel channel, KeywordSetting keywordSetting)> _parseQueue = new ConcurrentQueue<(Channel, KeywordSetting)>();
+        private ConcurrentQueue<(Channel channel, KeywordSetting keywordSetting)> _postQueue = new ConcurrentQueue<(Channel, KeywordSetting)>();
 
-        public Scheduler(IServiceScopeFactory scopeFactory, EpnApiClient epnApiClient, VkLinkShortener vkLinkShortener)
+        public Scheduler(IServiceScopeFactory scopeFactory, EpnApiClient epnApiClient, VkLinkShortener vkLinkShortener, DbContextOptions<AppDbContext> dbContextOptions)
         {
             _scopeFactory = scopeFactory;
             _epnApiClient = epnApiClient;
             _vkLinkShortener = vkLinkShortener;
+            _dbContextOptions = dbContextOptions;
         }
 
         public void StartAllTimers()
@@ -101,7 +103,7 @@ namespace TgBotParserAli.Quartz
             using (var scope = _scopeFactory.CreateScope())
             {
                 var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                var parseJob = new ParseJob(dbContext, _epnApiClient);
+                var parseJob = new ParseJob(dbContext, _epnApiClient, _dbContextOptions);
 
                 if (channel != null)
                 {
@@ -137,7 +139,7 @@ namespace TgBotParserAli.Quartz
             {
                 var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                 var botClient = scope.ServiceProvider.GetRequiredService<ITelegramBotClient>();
-                var postJob = new PostJob(dbContext, botClient, _vkLinkShortener);
+                var postJob = new PostJob(dbContext, botClient, _vkLinkShortener, _dbContextOptions);
 
                 if (channel != null)
                 {
@@ -192,17 +194,40 @@ namespace TgBotParserAli.Quartz
 
         public void RemoveTimers(int channelId)
         {
-            if (_parseTimers.TryGetValue(channelId, out var parseTimer))
+            Console.WriteLine($"Останавливаем таймеры и задачи для канала {channelId}...");
+
+            using (var scope = _scopeFactory.CreateScope())
             {
-                parseTimer.Dispose(); // Останавливаем таймер парсинга
-                _parseTimers.Remove(channelId);
+                var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+                // Получаем все KeywordSetting для канала
+                var keywordSettings = dbContext.KeywordSettings
+                    .Where(k => k.ChannelId == channelId)
+                    .ToList();
+
+                // Останавливаем таймеры для каждого KeywordSetting
+                foreach (var keywordSetting in keywordSettings)
+                {
+                    if (_parseTimers.TryGetValue(keywordSetting.Id, out var parseTimer))
+                    {
+                        parseTimer.Dispose();
+                        _parseTimers.Remove(keywordSetting.Id);
+                        Console.WriteLine($"Таймер парсинга для ключевого слова {keywordSetting.Keyword} остановлен.");
+                    }
+
+                    if (_postTimers.TryGetValue(keywordSetting.Id, out var postTimer))
+                    {
+                        postTimer.Dispose();
+                        _postTimers.Remove(keywordSetting.Id);
+                        Console.WriteLine($"Таймер постинга для ключевого слова {keywordSetting.Keyword} остановлен.");
+                    }
+                }
             }
 
-            if (_postTimers.TryGetValue(channelId, out var postTimer))
-            {
-                postTimer.Dispose(); // Останавливаем таймер постинга
-                _postTimers.Remove(channelId);
-            }
+            // Удаляем задачи из очередей
+            _parseQueue = new ConcurrentQueue<(Channel channel, KeywordSetting keywordSetting)>(_parseQueue.Where(x => x.channel.Id != channelId));
+            _postQueue = new ConcurrentQueue<(Channel channel, KeywordSetting keywordSetting)>(_postQueue.Where(x => x.channel.Id != channelId));
+            Console.WriteLine($"Задачи для канала {channelId} удалены из очередей.");
         }
     }
 }
