@@ -32,8 +32,8 @@ namespace TgBotAgent.DB
             );
 
             modelBuilder.Entity<UserLink>().HasData(
-                new UserLink { Id = 1, UserId1 = 123456789, UserId2 = 987654321, UserName1 = "unknown", UserName2 = "unknown" },
-                new UserLink { Id = 2, UserId1 = 1952565657, UserId2 = 7140034389, UserName1 = "violet_myst", UserName2 = "lercky" }
+                new UserLink { Id = 1, UserId1 = 1, UserId2 = 1, UserName1 = "unknown", UserName2 = "unknown" },
+                new UserLink { Id = 2, UserId1 = 2, UserId2 = 2, UserName1 = "violet_myst", UserName2 = "lercky" }
             );
 
             modelBuilder.Entity<MessageRecord>().HasData(
