@@ -26,6 +26,18 @@ namespace TgBotParserAli.Quartz
             {
                 using (var dbContext = new AppDbContext(_dbContextOptions))
                 {
+
+                    // Получаем количество неопубликованных товаров
+                    var unpublishedProductsCount = await dbContext.Products
+                        .CountAsync(p => p.ChannelId == channel.Id && !p.IsPosted);
+
+                    // Проверяем, нужно ли начинать парсинг
+                    if (unpublishedProductsCount >= channel.MaxPostsPerDay)
+                    {
+                        Console.WriteLine($"Количество неопубликованных товаров ({unpublishedProductsCount}) достигло лимита ({channel.MaxPostsPerDay}). Парсинг остановлен.");
+                        return;
+                    }
+
                     if (!channel.IsActive || !keywordSetting.IsParsing)
                     {
                         return; // Пропускаем неактивные каналы или ключевые слова

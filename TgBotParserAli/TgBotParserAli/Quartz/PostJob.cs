@@ -100,48 +100,82 @@ namespace TgBotParserAli.Quartz
         private async Task SendProductMessageAsync(Channel channel, Product product, ITelegramBotClient botClient, VkLinkShortener linkShortener)
         {
             try{
-                // Формируем ссылку
-                var productUrl = $"{channel.ReferralLink}{product.ProductId}.html";
-                var uriStr = new Uri(productUrl);
-                var finalUrl = channel.UseShortLinks
-                    ? await linkShortener.ShortenLinkAsync(uriStr)
-                    : productUrl;
-
-                // Формируем сообщение
-                var message = $"<b>{product.Name}</b>\n" +
-                              $"Цена: <s>{product.Price}</s> {product.DiscountedPrice} RUB\n" +
-                              $"Ссылка: {finalUrl}";
-
-                // Если есть изображения, отправляем их как медиагруппу
-                if (product.Images != null && product.Images.Any())
+                using (var dbContext = new AppDbContext(_dbContextOptions))
                 {
-                    var mediaGroup = new List<InputMediaPhoto>();
+                    var postSettings = await dbContext.PostSetting
+                        .FirstOrDefaultAsync(ps => ps.ChannelId == channel.Id);
 
-                    // Первое фото с текстом (подписью)
-                    mediaGroup.Add(new InputMediaPhoto(product.Images.First())
-                    {
-                        Caption = message,
-                        ParseMode = ParseMode.Html
-                    });
+                    // Формируем ссылку
+                    var productUrl = $"{channel.ReferralLink}{product.ProductId}.html";
+                    var uriStr = new Uri(productUrl);
+                    var finalUrl = channel.UseShortLinks
+                        ? await linkShortener.ShortenLinkAsync(uriStr)
+                        : productUrl;
 
-                    // Остальные фото (без текста)
-                    foreach (var image in product.Images.Skip(1))
+                    // Формируем сообщение
+                    string message;
+                    if (postSettings == null ||
+                        (string.IsNullOrEmpty(postSettings.PriceTemplate) &&
+                        string.IsNullOrEmpty(postSettings.TitleTemplate) &&
+                        string.IsNullOrEmpty(postSettings.CaptionTemplate)))
                     {
-                        mediaGroup.Add(new InputMediaPhoto(image));
+                        // Стандартный формат, если настройки отсутствуют
+                        message = $"<b>{product.Name}</b>\n" +
+                                  $"Цена: <s>{product.Price}</s> {product.DiscountedPrice} RUB\n" +
+                                  $"Ссылка: {finalUrl}";
+                    }
+                    else
+                    {
+                        // Формируем сообщение в соответствии с порядком из настроек
+                        var messageParts = new List<string>();
+
+                        var orderParts = postSettings.Order.Split(','); // Разбиваем порядок на части
+
+                        foreach (var part in orderParts)
+                        {
+                            switch (part)
+                            {
+                                case "Price":
+                                    messageParts.Add($"Цена: <s>{product.Price}</s> {product.DiscountedPrice} RUB");
+                                    break;
+                                case "Title":
+                                    messageParts.Add($"<b>{product.Name}</b>");
+                                    break;
+                                case "Caption":
+                                    messageParts.Add(postSettings.CaptionTemplate);
+                                    break;
+                            }
+                        }
+
+                        messageParts.Add($"Ссылка: {finalUrl}");
+                        message = string.Join("\n", messageParts);
                     }
 
-                    // Отправляем медиагруппу
-                    await botClient.SendMediaGroupAsync(
-                        chatId: channel.ChatId,
-                        media: mediaGroup);
-                }
-                else
-                {
-                    // Если нет фото, отправляем только текст
-                    await botClient.SendTextMessageAsync(
-                        chatId: channel.ChatId,
-                        text: message,
-                        parseMode: ParseMode.Html);
+                    // Отправляем сообщение с фотографиями
+                    if (product.Images != null && product.Images.Any())
+                    {
+                        var mediaGroup = new List<InputMediaPhoto>();
+
+                        // Первое фото с текстом (подписью)
+                        mediaGroup.Add(new InputMediaPhoto(product.Images.First())
+                        {
+                            Caption = message,
+                            ParseMode = ParseMode.Html
+                        });
+
+                        // Остальные фото (без текста)
+                        foreach (var image in product.Images.Skip(1))
+                        {
+                            mediaGroup.Add(new InputMediaPhoto(image));
+                        }
+
+                        await botClient.SendMediaGroupAsync(channel.ChatId, mediaGroup);
+                    }
+                    else
+                    {
+                        // Если нет фото, отправляем только текст
+                        await botClient.SendTextMessageAsync(channel.ChatId, message, parseMode: ParseMode.Html);
+                    }
                 }
             }
             catch (Exception ex)

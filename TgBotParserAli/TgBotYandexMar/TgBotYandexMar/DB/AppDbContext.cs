@@ -1,8 +1,7 @@
 ﻿using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
-using TgBotParserAli.Models;
+using TgBotYandexMar.Models;
 
-namespace TgBotParserAli.DB
+namespace TgBotYandexMar.DB
 {
     public class AppDbContext : DbContext
     {
@@ -12,6 +11,7 @@ namespace TgBotParserAli.DB
         public DbSet<KeywordSetting> KeywordSettings { get; set; }
         public DbSet<KeywordStat> KeywordStats { get; set; }
         public DbSet<PostSettings> PostSetting { get; set; }
+        public DbSet<ChannekStat> ChannelStats { get; set; }
 
         public AppDbContext()
         {
@@ -41,5 +41,4 @@ namespace TgBotParserAli.DB
             );
         }
     }
-
 }

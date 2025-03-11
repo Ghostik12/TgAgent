@@ -3,18 +3,21 @@ using System;
 using System.Collections.Generic;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
-using TgBotParserAli.DB;
+using TgBotYandexMar.DB;
 
 #nullable disable
 
-namespace TgBotParserAli.Migrations
+namespace TgBotYandexMar.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20250310182315_Update")]
+    partial class Update
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -23,7 +26,7 @@ namespace TgBotParserAli.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
-            modelBuilder.Entity("TgBotParserAli.Models.Admins", b =>
+            modelBuilder.Entity("TgBotYandexMar.Models.Admins", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
@@ -57,7 +60,7 @@ namespace TgBotParserAli.Migrations
                         });
                 });
 
-            modelBuilder.Entity("TgBotParserAli.Models.Channel", b =>
+            modelBuilder.Entity("TgBotYandexMar.Models.Channel", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
@@ -65,28 +68,23 @@ namespace TgBotParserAli.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
+                    b.Property<string>("ApiKey")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<string>("ChatId")
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<int>("FailedPosts")
-                        .HasColumnType("integer");
+                    b.Property<string>("Clid")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
 
-                    b.Property<string>("Keywords")
-                        .IsRequired()
-                        .HasColumnType("text");
-
                     b.Property<int>("MaxPostsPerDay")
                         .HasColumnType("integer");
-
-                    b.Property<decimal>("MaxPrice")
-                        .HasColumnType("numeric");
-
-                    b.Property<decimal>("MinPrice")
-                        .HasColumnType("numeric");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -95,17 +93,16 @@ namespace TgBotParserAli.Migrations
                     b.Property<int>("ParseCount")
                         .HasColumnType("integer");
 
-                    b.Property<int>("ParsedCount")
-                        .HasColumnType("integer");
+                    b.Property<bool>("ShowOpinionCount")
+                        .HasColumnType("boolean");
 
-                    b.Property<int>("PostedToday")
-                        .HasColumnType("integer");
+                    b.Property<bool>("ShowRating")
+                        .HasColumnType("boolean");
 
-                    b.Property<string>("ReferralLink")
-                        .IsRequired()
-                        .HasColumnType("text");
+                    b.Property<bool>("UseExactMatch")
+                        .HasColumnType("boolean");
 
-                    b.Property<bool>("UseShortLinks")
+                    b.Property<bool>("UseLowPrice")
                         .HasColumnType("boolean");
 
                     b.HasKey("Id");
@@ -113,7 +110,7 @@ namespace TgBotParserAli.Migrations
                     b.ToTable("Channels");
                 });
 
-            modelBuilder.Entity("TgBotParserAli.Models.KeywordSetting", b =>
+            modelBuilder.Entity("TgBotYandexMar.Models.KeywordSetting", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
@@ -123,12 +120,6 @@ namespace TgBotParserAli.Migrations
 
                     b.Property<int>("ChannelId")
                         .HasColumnType("integer");
-
-                    b.Property<bool>("IsParsing")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("IsPosting")
-                        .HasColumnType("boolean");
 
                     b.Property<string>("Keyword")
                         .IsRequired()
@@ -147,7 +138,7 @@ namespace TgBotParserAli.Migrations
                     b.ToTable("KeywordSettings");
                 });
 
-            modelBuilder.Entity("TgBotParserAli.Models.KeywordStat", b =>
+            modelBuilder.Entity("TgBotYandexMar.Models.KeywordStat", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
@@ -155,27 +146,23 @@ namespace TgBotParserAli.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
-                    b.Property<int>("ChannelId")
+                    b.Property<int>("KeywordSettingId")
                         .HasColumnType("integer");
 
-                    b.Property<int>("Count")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Keyword")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<DateTime>("LastUpdated")
+                    b.Property<DateTime>("LastParsedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("ParsedCount")
+                        .HasColumnType("integer");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ChannelId");
+                    b.HasIndex("KeywordSettingId");
 
                     b.ToTable("KeywordStats");
                 });
 
-            modelBuilder.Entity("TgBotParserAli.Models.PostSettings", b =>
+            modelBuilder.Entity("TgBotYandexMar.Models.PostSettings", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
@@ -198,18 +185,25 @@ namespace TgBotParserAli.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<bool>("ShowOpinionCount")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("ShowRating")
+                        .HasColumnType("boolean");
+
                     b.Property<string>("TitleTemplate")
                         .IsRequired()
                         .HasColumnType("text");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ChannelId");
+                    b.HasIndex("ChannelId")
+                        .IsUnique();
 
                     b.ToTable("PostSetting");
                 });
 
-            modelBuilder.Entity("TgBotParserAli.Models.Product", b =>
+            modelBuilder.Entity("TgBotYandexMar.Models.Product", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
@@ -220,12 +214,8 @@ namespace TgBotParserAli.Migrations
                     b.Property<int>("ChannelId")
                         .HasColumnType("integer");
 
-                    b.Property<decimal>("DiscountedPrice")
-                        .HasColumnType("numeric");
-
-                    b.PrimitiveCollection<List<string>>("Images")
-                        .IsRequired()
-                        .HasColumnType("text[]");
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<bool>("IsPosted")
                         .HasColumnType("boolean");
@@ -238,12 +228,22 @@ namespace TgBotParserAli.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<decimal>("Price")
-                        .HasColumnType("numeric");
+                    b.Property<int>("OpinionCount")
+                        .HasColumnType("integer");
 
-                    b.Property<string>("ProductId")
+                    b.PrimitiveCollection<List<string>>("Photos")
+                        .IsRequired()
+                        .HasColumnType("text[]");
+
+                    b.Property<DateTime?>("PostedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Price")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<double>("Rating")
+                        .HasColumnType("double precision");
 
                     b.Property<string>("Url")
                         .IsRequired()
@@ -256,9 +256,9 @@ namespace TgBotParserAli.Migrations
                     b.ToTable("Products");
                 });
 
-            modelBuilder.Entity("TgBotParserAli.Models.KeywordSetting", b =>
+            modelBuilder.Entity("TgBotYandexMar.Models.KeywordSetting", b =>
                 {
-                    b.HasOne("TgBotParserAli.Models.Channel", "Channel")
+                    b.HasOne("TgBotYandexMar.Models.Channel", "Channel")
                         .WithMany("KeywordSettings")
                         .HasForeignKey("ChannelId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -267,20 +267,31 @@ namespace TgBotParserAli.Migrations
                     b.Navigation("Channel");
                 });
 
-            modelBuilder.Entity("TgBotParserAli.Models.KeywordStat", b =>
+            modelBuilder.Entity("TgBotYandexMar.Models.KeywordStat", b =>
                 {
-                    b.HasOne("TgBotParserAli.Models.Channel", "Channel")
-                        .WithMany("KeywordStats")
-                        .HasForeignKey("ChannelId")
+                    b.HasOne("TgBotYandexMar.Models.KeywordSetting", "KeywordSetting")
+                        .WithMany()
+                        .HasForeignKey("KeywordSettingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("KeywordSetting");
+                });
+
+            modelBuilder.Entity("TgBotYandexMar.Models.PostSettings", b =>
+                {
+                    b.HasOne("TgBotYandexMar.Models.Channel", "Channel")
+                        .WithOne("PostSettings")
+                        .HasForeignKey("TgBotYandexMar.Models.PostSettings", "ChannelId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
                     b.Navigation("Channel");
                 });
 
-            modelBuilder.Entity("TgBotParserAli.Models.PostSettings", b =>
+            modelBuilder.Entity("TgBotYandexMar.Models.Product", b =>
                 {
-                    b.HasOne("TgBotParserAli.Models.Channel", "Channel")
+                    b.HasOne("TgBotYandexMar.Models.Channel", "Channel")
                         .WithMany()
                         .HasForeignKey("ChannelId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -289,24 +300,12 @@ namespace TgBotParserAli.Migrations
                     b.Navigation("Channel");
                 });
 
-            modelBuilder.Entity("TgBotParserAli.Models.Product", b =>
-                {
-                    b.HasOne("TgBotParserAli.Models.Channel", "Channel")
-                        .WithMany("Products")
-                        .HasForeignKey("ChannelId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Channel");
-                });
-
-            modelBuilder.Entity("TgBotParserAli.Models.Channel", b =>
+            modelBuilder.Entity("TgBotYandexMar.Models.Channel", b =>
                 {
                     b.Navigation("KeywordSettings");
 
-                    b.Navigation("KeywordStats");
-
-                    b.Navigation("Products");
+                    b.Navigation("PostSettings")
+                        .IsRequired();
                 });
 #pragma warning restore 612, 618
         }

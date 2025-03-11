@@ -114,6 +114,9 @@ namespace TgBotParserAli.Controllers
                         var chatIdStop = update.Message.From.Id;
                         await StopChannel(chatIdStop, channelStop);
                         break;
+                    case "Сборка поста":
+                        await HandlePostSettings(update.Message.From.Id);
+                        break;
                     case "Изменить частоту парсинга":
                         await HandleChangeRequest(update.Message.From.Id, update.Message.Text);
                         break;
@@ -154,6 +157,24 @@ namespace TgBotParserAli.Controllers
                         break;
                 }
             }
+        }
+
+        private async Task HandlePostSettings(long chatId)
+        {
+            var channel = _pendingChange.Channel;
+
+            if (channel == null)
+            {
+                await _client.SendTextMessageAsync(chatId, "Канал не выбран.");
+                return;
+            }
+
+            // Запрашиваем первое значение
+            await _client.SendTextMessageAsync(chatId, "Введите первое значение (цена, название или подпись):");
+            _pendingChange.ChangeType = "PostSettings_First";
+
+            // Сохраняем состояние для следующего шага
+            _pendingChange.Channel = channel;
         }
 
         private async Task StopChannel(long chatId, Channel channel)
@@ -254,9 +275,16 @@ namespace TgBotParserAli.Controllers
             {
                 var _dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-                if (_pendingChange.ChangeType != null && _pendingChange.Channel != null)
+                if (_pendingChange.ChangeType != null && _pendingChange.Channel != null &&
+                    _pendingChange.ChangeType != "PostSettings_First" && _pendingChange.ChangeType != "PostSettings_Second" &&
+                    _pendingChange.ChangeType != "PostSettings_Third")
                 {
                     await ApplyChange(chatId, text);
+                }
+                else if(_pendingChange.ChangeType == "PostSettings_First" || _pendingChange.ChangeType == "PostSettings_Second" ||
+                    _pendingChange.ChangeType == "PostSettings_Third")
+                {
+                    await PostChange(chatId, text);
                 }
                 else if (_isAddingChannel && text.Contains(','))
                 {
@@ -278,6 +306,108 @@ namespace TgBotParserAli.Controllers
                     {
                         await _client.SendTextMessageAsync(chatId, "Канал не найден.");
                     }
+                }
+            }
+        }
+
+        private async Task PostChange(long chatId, string newValue)
+        {
+            var channel = _pendingChange.Channel;
+            var changeType = _pendingChange.ChangeType;
+
+            using (var scope = _scopeFactory.CreateScope())
+            {
+                var _dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                if (changeType.StartsWith("PostSettings_"))
+                {
+                    var postSettings = await _dbContext.PostSetting
+                        .FirstOrDefaultAsync(ps => ps.ChannelId == channel.Id);
+
+                    if (postSettings == null)
+                    {
+                        postSettings = new PostSettings
+                        {
+                            ChannelId = channel.Id,
+                            PriceTemplate = "", // Инициализируем пустой строкой
+                            TitleTemplate = "", // Инициализируем пустой строкой
+                            CaptionTemplate = "", // Инициализируем пустой строкой
+                            Order = "" // Инициализируем пустой строкой
+                        };
+                        _dbContext.PostSetting.Add(postSettings);
+                    }
+
+                    switch (changeType)
+                    {
+                        case "PostSettings_First":
+                            if (newValue.Trim().ToLower() == "цена")
+                            {
+                                postSettings.PriceTemplate = "1"; // Например, "1" для цены
+                                postSettings.Order += "Price,"; // Добавляем порядок
+                                await _client.SendTextMessageAsync(chatId, "Введите второе значение (название или подпись):");
+                                _pendingChange.ChangeType = "PostSettings_Second";
+                            }
+                            else if (newValue.Trim().ToLower() == "название")
+                            {
+                                postSettings.TitleTemplate = "1"; // Например, "1" для названия
+                                postSettings.Order += "Title,"; // Добавляем порядок
+                                await _client.SendTextMessageAsync(chatId, "Введите второе значение (цена или подпись):");
+                                _pendingChange.ChangeType = "PostSettings_Second";
+                            }
+                            else
+                            {
+                                postSettings.CaptionTemplate = newValue; // Подпись
+                                postSettings.Order += "Caption,"; // Добавляем порядок
+                                await _client.SendTextMessageAsync(chatId, "Введите второе значение (цена или название):");
+                                _pendingChange.ChangeType = "PostSettings_Second";
+                            }
+                            break;
+
+                        case "PostSettings_Second":
+                            if (newValue.Trim().ToLower() == "цена")
+                            {
+                                postSettings.PriceTemplate = "2"; // Например, "2" для цены
+                                postSettings.Order += "Price,"; // Добавляем порядок
+                                await _client.SendTextMessageAsync(chatId, "Введите третье значение (название или подпись):");
+                                _pendingChange.ChangeType = "PostSettings_Third";
+                            }
+                            else if (newValue.Trim().ToLower() == "название")
+                            {
+                                postSettings.TitleTemplate = "2"; // Например, "2" для названия\
+                                postSettings.Order += "Title,"; // Добавляем порядок
+                                await _client.SendTextMessageAsync(chatId, "Введите третье значение (цена или подпись):");
+                                _pendingChange.ChangeType = "PostSettings_Third";
+                            }
+                            else
+                            {
+                                postSettings.CaptionTemplate = newValue; // Подпись
+                                postSettings.Order += "Caption,"; // Добавляем порядок
+                                await _client.SendTextMessageAsync(chatId, "Введите третье значение (цена или название):");
+                                _pendingChange.ChangeType = "PostSettings_Third";
+                            }
+                            break;
+
+                        case "PostSettings_Third":
+                            if (newValue.Trim().ToLower() == "цена")
+                            {
+                                postSettings.PriceTemplate = "3"; // Например, "3" для цены
+                                postSettings.Order += "Price,"; // Добавляем порядок
+                            }
+                            else if (newValue.Trim().ToLower() == "название")
+                            {
+                                postSettings.TitleTemplate = "3"; // Например, "3" для названия
+                                postSettings.Order += "Title,"; // Добавляем порядок
+                            }
+                            else
+                            {
+                                postSettings.CaptionTemplate = newValue; // Подпись
+                                postSettings.Order += "Caption,"; // Добавляем порядок
+                            }
+
+                            await _client.SendTextMessageAsync(chatId, "Настройки сборки поста сохранены.");
+                            _pendingChange.ChangeType = null;
+                            break;
+                    }
+                    await _dbContext.SaveChangesAsync();
                 }
             }
         }
@@ -500,6 +630,7 @@ namespace TgBotParserAli.Controllers
                 new[] { new KeyboardButton("Изменить диапазон цен") },
                 new[] { new KeyboardButton("Изменить партнерскую ссылку") },
                 new[] { new KeyboardButton("Изменить ключевые слова") },
+                new[] { new KeyboardButton("Сборка поста") },
                 new[] { new KeyboardButton(channel.UseShortLinks ? "Отключить сокращение ссылок" : "Включить сокращение ссылок") },
                 new[] { new KeyboardButton(channel.IsActive ? "⏸ Остановить канал" : "▶️ Запустить канал") },
                 new[] { new KeyboardButton("🗑 Удалить канал") },
