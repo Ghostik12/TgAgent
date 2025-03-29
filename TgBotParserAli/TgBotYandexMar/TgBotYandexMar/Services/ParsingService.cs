@@ -62,22 +62,28 @@ namespace TgBotYandexMar.Services
 
                 // Находим все записи статистики, которые нужно сбросить
                 var statsToReset = await dbContext.KeywordStats
-                    .Where(ks => ks.LastParsedAt < DateTime.UtcNow.Date)
+                    //.Where(ks => ks.LastParsedAt < DateTime.UtcNow.Date)
                     .ToListAsync();
 
                 foreach (var stat in statsToReset)
                 {
                     stat.ParsedCount = 0;
                     stat.LastParsedAt = DateTime.UtcNow;
+                    dbContext.KeywordStats.Update(stat);
                 }
 
-                await dbContext.SaveChangesAsync();
-
-                // Перезапускаем таймеры парсинга для всех ключевых слов
-                var channels = await dbContext.Channels
-                    .Include(c => c.KeywordSettings)
-                    .Where(c => c.IsActive)
+                // Сбрасываем счетчик постинга для всех каналов
+                var channelStatsToReset = await dbContext.ChannelStats
+                    //.Where(cs => cs.LastUpdatedAt < DateTime.UtcNow.Date)
                     .ToListAsync();
+
+                foreach (var channelStat in channelStatsToReset)
+                {
+                    channelStat.PostedCount = 0; // Сбрасываем счетчик постинга
+                    channelStat.LastUpdatedAt = DateTime.UtcNow;
+                    dbContext.ChannelStats.Update(channelStat);
+                }
+                await dbContext.SaveChangesAsync();
 
                 // Перезапускаем таймеры парсинга
                 _channelService.RestartKeywordTimers();

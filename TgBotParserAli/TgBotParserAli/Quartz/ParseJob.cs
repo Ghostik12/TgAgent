@@ -11,22 +11,24 @@ namespace TgBotParserAli.Quartz
         private readonly AppDbContext _dbContext;
         private readonly DbContextOptions<AppDbContext> _dbContextOptions;
         private static readonly SemaphoreSlim _parseSemaphore = new SemaphoreSlim(1, 1);
+        private TokenService _tokenService;
 
-        public ParseJob(AppDbContext appDbContext, EpnApiClient epnApiClient, DbContextOptions<AppDbContext> dbContextOptions)
+        public ParseJob(AppDbContext appDbContext, EpnApiClient epnApiClient, DbContextOptions<AppDbContext> dbContextOptions, TokenService tokenService)
         {
             _dbContext = appDbContext;
             _epnApiClient = epnApiClient;
             _dbContextOptions = dbContextOptions;
+            _tokenService = tokenService;
         }
 
-        public async Task Execute(Channel channel, KeywordSetting keywordSetting)
+        public async Task Execute(int channelId, KeywordSetting keywordSetting)
         {
             await _parseSemaphore.WaitAsync();
             try
             {
                 using (var dbContext = new AppDbContext(_dbContextOptions))
                 {
-
+                    var channel = await dbContext.Channels.FirstOrDefaultAsync(c => c.Id == channelId);
                     // Получаем количество неопубликованных товаров
                     var unpublishedProductsCount = await dbContext.Products
                         .CountAsync(p => p.ChannelId == channel.Id && !p.IsPosted);
@@ -77,48 +79,77 @@ namespace TgBotParserAli.Quartz
                             {
                                 if (IsProductValid(offer, channel))
                                 {
-                                    // Создаем список изображений
-                                    var images = new List<string>();
-
-                                    // Добавляем основное изображение (picture)
-                                    if (!string.IsNullOrEmpty(offer.Picture))
+                                    // Получаем актуальный access_token
+                                    var accessToken = await _tokenService.GetAccessTokenAsync();
+                                    if (accessToken == null) { Console.WriteLine("Проблема с токеном"); return; }
+                                    // Проверяем товар через API
+                                    var productLink = $"https://aliexpress.ru/item/{offer.Id}.html";
+                                    var productInfo = await _epnApiClient.CheckProductAsync(productLink, accessToken);
+                                    if (productInfo == null)
                                     {
-                                        images.Add(offer.Picture);
+                                        var refreshToken = await _dbContext.Tokens.FirstOrDefaultAsync();
+                                        var newTokens = await _epnApiClient.RefreshTokensAsync(refreshToken.RefreshToken);
+                                        refreshToken.RefreshToken = newTokens.Data.Attributes.RefreshToken;
+                                        refreshToken.AccessToken = newTokens.Data.Attributes.AccessToken;
+                                        refreshToken.ExpiresAt = DateTime.UtcNow.AddDays(1);
+                                        _dbContext.Tokens.Update(refreshToken);
+                                        await _dbContext.SaveChangesAsync();
+                                        productInfo = await _epnApiClient.CheckProductAsync(productLink, newTokens.Data.Attributes.AccessToken);
                                     }
 
-                                    // Добавляем все изображения из all_images, если они есть
-                                    if (offer.AllImages != null && offer.AllImages.Any())
+                                    if (productInfo.Result && !string.IsNullOrEmpty(productInfo.Data.Attributes.ProductName) && !string.IsNullOrEmpty(productInfo.Data.Attributes.ProductImage))
                                     {
-                                        images.AddRange(offer.AllImages);
-                                    }
+                                        var existingProduct = await dbContext.Products
+                                            .FirstOrDefaultAsync(p => p.Url == offer.Url);
 
-                                    // Создаем новый товар
-                                    var newProduct = new Product
-                                    {
-                                        ProductId = offer.Id.ToString(),
-                                        Name = offer.Name,
-                                        Price = offer.Price,
-                                        DiscountedPrice = offer.SalePrice,
-                                        Images = images, // Сохраняем все изображения
-                                        ChannelId = channel.Id,
-                                        Url = offer.Url,
-                                        Keyword = keywordSetting.Keyword // Сохраняем ключевое слово
-                                    };
-                                    productsToAdd.Add(newProduct);
-                                    addedProductsCount++;
+                                        if (existingProduct != null)
+                                        {
+                                            continue; // Пропускаем товар, если он уже существует
+                                        }
+                                        // Создаем список изображений
+                                        var images = new List<string>();
+
+                                        // Добавляем все изображения из all_images, если они есть
+                                        if (offer.AllImages != null && offer.AllImages.Any())
+                                        {
+                                            images.AddRange(offer.AllImages);
+                                        }
+                                        else
+                                        {
+                                            // Добавляем основное изображение (picture)
+                                            if (!string.IsNullOrEmpty(offer.Picture))
+                                            {
+                                                images.Add(offer.Picture);
+                                            }
+                                        }
+
+                                        // Создаем новый товар
+                                        var newProduct = new Product
+                                        {
+                                            ProductId = offer.Id.ToString(),
+                                            Name = offer.Name,
+                                            Price = offer.Price,
+                                            DiscountedPrice = offer.SalePrice,
+                                            Images = images, // Сохраняем все изображения
+                                            ChannelId = channel.Id,
+                                            Url = offer.Url,
+                                            Keyword = keywordSetting.Keyword // Сохраняем ключевое слово
+                                        };
+                                        dbContext.Products.Add(newProduct);
+                                        addedProductsCount++;
+                                    }
                                 }
                             }
-                            dbContext.Products.AddRange(productsToAdd);
-                            await dbContext.SaveChangesAsync();
 
                             // Обновляем ParsedCount
                             channel.ParsedCount += channel.ParseCount;
-
-                            // Сохраняем статистику по ключевому слову
-                            await UpdateKeywordStat(channel.Id, keywordSetting.Keyword, addedProductsCount);
+                            dbContext.Channels.Update(channel);
 
                             // Сохраняем изменения
                             await dbContext.SaveChangesAsync();
+
+                            // Сохраняем статистику по ключевому слову
+                            await UpdateKeywordStat(channel.Id, keywordSetting.Keyword, addedProductsCount);
 
                             Console.WriteLine($"Парсинг завершен для ключевого слова '{keywordSetting.Keyword}'. Добавлено {addedProductsCount} товаров.");
                         }
@@ -152,31 +183,40 @@ namespace TgBotParserAli.Quartz
 
         private async Task UpdateKeywordStat(int channelId, string keyword, int addedProductsCount)
         {
-            using (var dbContext = new AppDbContext(_dbContextOptions))
+            try
             {
-                // Ищем запись в статистике по ключевому слову
-                var keywordStat = await dbContext.KeywordStats
-                .FirstOrDefaultAsync(k => k.ChannelId == channelId && k.Keyword == keyword);
+                using (var dbContext = new AppDbContext(_dbContextOptions))
+                {
+                    // Ищем запись в статистике по ключевому слову
+                    var keywordStat = await dbContext.KeywordStats
+                    .FirstOrDefaultAsync(k => k.ChannelId == channelId && k.Keyword == keyword);
 
-                if (keywordStat == null)
-                {
-                    // Если записи нет, создаем новую
-                    keywordStat = new KeywordStat
+                    if (keywordStat == null)
                     {
-                        ChannelId = channelId,
-                        Keyword = keyword,
-                        Count = addedProductsCount,
-                        LastUpdated = DateTime.UtcNow
-                    };
-                    dbContext.KeywordStats.Add(keywordStat);
+                        // Если записи нет, создаем новую
+                        keywordStat = new KeywordStat
+                        {
+                            ChannelId = channelId,
+                            Keyword = keyword,
+                            Count = addedProductsCount,
+                            LastUpdated = DateTime.UtcNow
+                        };
+                        dbContext.KeywordStats.Add(keywordStat);
+                    }
+                    else
+                    {
+                        // Если запись есть, обновляем количество и дату
+                        keywordStat.Count += addedProductsCount;
+                        keywordStat.LastUpdated = DateTime.UtcNow;
+                        dbContext.KeywordStats.Update(keywordStat);
+                    }
+
+                    await dbContext.SaveChangesAsync();
                 }
-                else
-                {
-                    // Если запись есть, обновляем количество и дату
-                    keywordStat.Count += addedProductsCount;
-                    keywordStat.LastUpdated = DateTime.UtcNow;
-                    dbContext.KeywordStats.Update(keywordStat);
-                }
+            }
+            catch (Exception ex) 
+            {
+                Console.WriteLine(ex.ToString() + "123");
             }
         }
     }

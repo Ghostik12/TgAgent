@@ -15,17 +15,19 @@ namespace TgBotParserAli.Quartz
         private readonly EpnApiClient _epnApiClient;
         private readonly VkLinkShortener _vkLinkShortener;
         private readonly DbContextOptions<AppDbContext> _dbContextOptions;
+        private TokenService _tokenService;
 
         // Очереди для задач парсинга и постинга
         private ConcurrentQueue<(Channel channel, KeywordSetting keywordSetting)> _parseQueue = new ConcurrentQueue<(Channel, KeywordSetting)>();
         private ConcurrentQueue<(Channel channel, KeywordSetting keywordSetting)> _postQueue = new ConcurrentQueue<(Channel, KeywordSetting)>();
 
-        public Scheduler(IServiceScopeFactory scopeFactory, EpnApiClient epnApiClient, VkLinkShortener vkLinkShortener, DbContextOptions<AppDbContext> dbContextOptions)
+        public Scheduler(IServiceScopeFactory scopeFactory, EpnApiClient epnApiClient, VkLinkShortener vkLinkShortener, DbContextOptions<AppDbContext> dbContextOptions, TokenService tokenService)
         {
             _scopeFactory = scopeFactory;
             _epnApiClient = epnApiClient;
             _vkLinkShortener = vkLinkShortener;
             _dbContextOptions = dbContextOptions;
+            _tokenService = tokenService;
         }
 
         public void StartAllTimers()
@@ -33,7 +35,7 @@ namespace TgBotParserAli.Quartz
             using (var scope = _scopeFactory.CreateScope())
             {
                 var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                var channels = dbContext.Channels.ToList();
+                var channels = dbContext.Channels.AsNoTracking().ToList();
                 foreach (var channel in channels)
                 {
                     if (channel == null || !channel.IsActive)
@@ -97,20 +99,39 @@ namespace TgBotParserAli.Quartz
 
             keywordSetting.IsParsing = true;
 
-            // Задержка перед выполнением парсинга
-            await Task.Delay(keywordSetting.ParseFrequency);
-
+            // Проверяем, достигнут ли лимит неопубликованных товаров
             using (var scope = _scopeFactory.CreateScope())
             {
                 var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                var parseJob = new ParseJob(dbContext, _epnApiClient, _dbContextOptions);
+                var unpublishedProductsCount = await dbContext.Products
+                    .CountAsync(p => p.ChannelId == channel.Id && !p.IsPosted);
 
-                if (channel != null)
+                if (unpublishedProductsCount >= channel.MaxPostsPerDay)
                 {
-                    Console.WriteLine($"Парсинг для канала {channel.Name} (ключевое слово: {keywordSetting.Keyword})");
-                    await parseJob.Execute(channel, keywordSetting);
+                    Console.WriteLine($"Лимит неопубликованных товаров достигнут для канала {channel.Name}. Парсинг остановлен.");
+                    StopParsingTimers(channel.Id); // Останавливаем только таймеры парсинга
+                    keywordSetting.IsParsing = false;
+                    return;
                 }
             }
+
+            // Задержка перед выполнением парсинга
+            await Task.Delay(keywordSetting.ParseFrequency);
+
+            await Task.Run(async () =>
+            {
+                using (var scope = _scopeFactory.CreateScope())
+                {
+                    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                    var parseJob = new ParseJob(dbContext, _epnApiClient, _dbContextOptions, _tokenService);
+
+                    if (channel != null)
+                    {
+                        Console.WriteLine($"Парсинг для канала {channel.Name} (ключевое слово: {keywordSetting.Keyword})");
+                        await parseJob.Execute(channel.Id, keywordSetting);
+                    }
+                }
+            });
 
             keywordSetting.IsParsing = false;
 
@@ -132,21 +153,40 @@ namespace TgBotParserAli.Quartz
 
             keywordSetting.IsPosting = true;
 
-            // Задержка перед выполнением постинга
-            await Task.Delay(keywordSetting.PostFrequency);
-
+            // Проверяем, достигнут ли лимит неопубликованных товаров
             using (var scope = _scopeFactory.CreateScope())
             {
                 var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                var botClient = scope.ServiceProvider.GetRequiredService<ITelegramBotClient>();
-                var postJob = new PostJob(dbContext, botClient, _vkLinkShortener, _dbContextOptions);
+                var unpublishedProductsCount = await dbContext.Products
+                    .CountAsync(p => p.ChannelId == channel.Id && !p.IsPosted);
 
-                if (channel != null)
+                if (channel.PostedToday >= channel.MaxPostsPerDay)
                 {
-                    Console.WriteLine($"Постинг для канала {channel.Name} (ключевое слово: {keywordSetting.Keyword})");
-                    await postJob.Execute(channel, keywordSetting);
+                    Console.WriteLine($"Лимит неопубликованных товаров достигнут для канала {channel.Name}. Парсинг остановлен.");
+                    StopPostingTimers(channel.Id); // Останавливаем только таймеры парсинга
+                    keywordSetting.IsParsing = false;
+                    return;
                 }
             }
+
+            // Задержка перед выполнением постинга
+            await Task.Delay(keywordSetting.PostFrequency);
+
+            await Task.Run(async () =>
+            {
+                using (var scope = _scopeFactory.CreateScope())
+                {
+                    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                    var botClient = scope.ServiceProvider.GetRequiredService<ITelegramBotClient>();
+                    var postJob = new PostJob(dbContext, botClient, _vkLinkShortener, _dbContextOptions);
+
+                    if (channel != null)
+                    {
+                        Console.WriteLine($"Постинг для канала {channel.Name} (ключевое слово: {keywordSetting.Keyword})");
+                        await postJob.Execute(channel, keywordSetting);
+                    }
+                }
+            });
 
             keywordSetting.IsPosting = false;
 
@@ -228,6 +268,104 @@ namespace TgBotParserAli.Quartz
             _parseQueue = new ConcurrentQueue<(Channel channel, KeywordSetting keywordSetting)>(_parseQueue.Where(x => x.channel.Id != channelId));
             _postQueue = new ConcurrentQueue<(Channel channel, KeywordSetting keywordSetting)>(_postQueue.Where(x => x.channel.Id != channelId));
             Console.WriteLine($"Задачи для канала {channelId} удалены из очередей.");
+        }
+
+        public void StopParsingIfLimitReached(Channel channel)
+        {
+            using (var scope = _scopeFactory.CreateScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+                // Получаем количество неопубликованных товаров
+                var unpublishedProductsCount = dbContext.Products
+                    .Count(p => p.ChannelId == channel.Id && !p.IsPosted);
+
+                // Останавливаем таймеры, если лимит достигнут
+                if (unpublishedProductsCount >= channel.MaxPostsPerDay)
+                {
+                    Console.WriteLine($"Количество неопубликованных товаров ({unpublishedProductsCount}) достигло лимита ({channel.MaxPostsPerDay}). Парсинг остановлен.");
+                    RemoveTimers(channel.Id);
+                }
+            }
+        }
+
+        public void RestartParsingIfConditionsMet(Channel channel)
+        {
+            using (var scope = _scopeFactory.CreateScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+                // Получаем количество неопубликованных товаров
+                var unpublishedProductsCount = dbContext.Products
+                    .Count(p => p.ChannelId == channel.Id && !p.IsPosted);
+
+                // Проверяем условия для возобновления парсинга
+                if (unpublishedProductsCount < channel.MaxPostsPerDay)
+                {
+                    Console.WriteLine($"Количество неопубликованных товаров ({unpublishedProductsCount}) меньше лимита ({channel.MaxPostsPerDay}). Парсинг возобновлен.");
+                    ScheduleJobsForChannel(channel); // Перезапускаем таймеры
+                }
+            }
+        }
+
+        public void StopParsingTimers(int channelId)
+        {
+            Console.WriteLine($"Останавливаем таймеры парсинга для канала {channelId}...");
+
+            using (var scope = _scopeFactory.CreateScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+                // Получаем все KeywordSetting для канала
+                var keywordSettings = dbContext.KeywordSettings
+                    .Where(k => k.ChannelId == channelId)
+                    .ToList();
+
+                // Останавливаем таймеры парсинга для каждого KeywordSetting
+                foreach (var keywordSetting in keywordSettings)
+                {
+                    if (_parseTimers.TryGetValue(keywordSetting.Id, out var parseTimer))
+                    {
+                        parseTimer.Dispose();
+                        _parseTimers.Remove(keywordSetting.Id);
+                        Console.WriteLine($"Таймер парсинга для ключевого слова {keywordSetting.Keyword} остановлен.");
+                    }
+                }
+            }
+
+            // Удаляем задачи парсинга из очереди
+            _parseQueue = new ConcurrentQueue<(Channel channel, KeywordSetting keywordSetting)>(_parseQueue.Where(x => x.channel.Id != channelId));
+            Console.WriteLine($"Задачи парсинга для канала {channelId} удалены из очереди.");
+        }
+
+        public void StopPostingTimers(int channelId)
+        {
+            Console.WriteLine($"Останавливаем таймеры постинга для канала {channelId}...");
+
+            using (var scope = _scopeFactory.CreateScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+                // Получаем все KeywordSetting для канала
+                var keywordSettings = dbContext.KeywordSettings
+                    .Where(k => k.ChannelId == channelId)
+                    .ToList();
+
+                // Останавливаем таймеры постинга для каждого KeywordSetting
+                foreach (var keywordSetting in keywordSettings)
+                {
+                    if (_postTimers.TryGetValue(keywordSetting.Id, out var postTimer))
+                    {
+                        postTimer.Dispose();
+                        _postTimers.Remove(keywordSetting.Id);
+                        Console.WriteLine($"Таймер постинга для ключевого слова {keywordSetting.Keyword} остановлен.");
+                    }
+                }
+            }
+
+            // Удаляем задачи постинга из очереди
+            _postQueue = new ConcurrentQueue<(Channel channel, KeywordSetting keywordSetting)>(_postQueue.Where(x => x.channel.Id != channelId));
+            Console.WriteLine($"Задачи постинга для канала {channelId} удалены из очереди.");
         }
     }
 }

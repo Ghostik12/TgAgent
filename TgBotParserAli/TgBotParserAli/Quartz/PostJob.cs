@@ -38,6 +38,13 @@ namespace TgBotParserAli.Quartz
 
                     Console.WriteLine($"Постинг товаров для канала {channel.Name}...");
 
+                    // Проверяем, не достигнут ли лимит постов за день
+                    if (channel.PostedToday >= channel.MaxPostsPerDay)
+                    {
+                        Console.WriteLine($"Лимит постов за день достигнут для канала {channel.Name}.");
+                        return;
+                    }
+
                     // Получаем товары для текущего ключевого слова
                     var products = await dbContext.Products
                         .AsNoTracking()
@@ -56,12 +63,6 @@ namespace TgBotParserAli.Quartz
 
                     try
                     {
-                        // Проверяем, не достигнут ли лимит постов за день
-                        if (channel.PostedToday >= channel.MaxPostsPerDay)
-                        {
-                            Console.WriteLine($"Лимит постов за день достигнут для канала {channel.Name}.");
-                            return;
-                        }
 
                         // Отправляем сообщение с товаром
                         await SendProductMessageAsync(channel, product, _botClient, _linkShortener);
@@ -144,10 +145,11 @@ namespace TgBotParserAli.Quartz
                                 case "Caption":
                                     messageParts.Add(postSettings.CaptionTemplate);
                                     break;
+                                case "Url":
+                                    messageParts.Add($"Ссылка: {finalUrl}");
+                                    break;
                             }
                         }
-
-                        messageParts.Add($"Ссылка: {finalUrl}");
                         message = string.Join("\n", messageParts);
                     }
 

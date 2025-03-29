@@ -31,7 +31,7 @@ namespace TgBotYandexMar
         {
             if (update.Type == UpdateType.CallbackQuery)
             {
-                //await _textMessageController.BotClient_OnCallbackQuery(update.CallbackQuery);
+                await _textMessageController.BotClient_OnCallbackQuery(update.CallbackQuery);
                 return;
             }
 

@@ -19,10 +19,12 @@ namespace TgBotYandexMar.Controller
         private readonly IServiceScopeFactory _scopeFactory;
         private Dictionary<long, int> _selectedChannels = new(); // chatId -> channelId
         private bool _isConfiguringPost = false; // Флаг для настройки сборки поста
-        private List<string> _postComponents = new(); // Список для хранения введенных компонентов
+        private string _postComponents; // Список для хранения введенных компонентов
         private bool _isWaitingForAuthCode = false;
+        private bool _isMaxPost = false;
         private readonly HttpClient _httpClient;
         private ChannelService _channelService;
+        private (string ChangeType, KeywordSetting KeywordSetting) _changeWords;
 
         public TextMessageController(ITelegramBotClient client, IServiceScopeFactory serviceScopeFactory, HttpClient httpClient, ChannelService channelService)
         {
@@ -43,7 +45,7 @@ namespace TgBotYandexMar.Controller
 
                 await _client.SendTextMessageAsync(update.Message.From.Id, "Привет! Я бот для работы с Яндекс.Маркетом.");
                 _isConfiguringPost = false;
-                _postComponents.Clear();
+                _postComponents = "";
                 _selectedChannels.Clear();
                 _isWaitingForAuthCode = false;
                 _isAddingChannel = false;
@@ -110,7 +112,24 @@ namespace TgBotYandexMar.Controller
                         await _client.SendTextMessageAsync(update.Message.From.Id, $"Перейдите по ссылке для авторизации: {oauthUrl}\nПосле авторизации введите код, который вы получите.");
                         _isWaitingForAuthCode = true; // Устанавливаем флаг ожидания кода
                         break;
+                    case "Изменить максимальное количество постов":
+                        if (_selectedChannels[update.Message.From.Id] == null)
+                        {
+                            await _client.SendTextMessageAsync(update.Message.From.Id, "Канал не найден.");
+                            return;
+                        }
+                        _isMaxPost = true;
+                        await _client.SendTextMessageAsync(update.Message.From.Id, "Введите новое максимальное количество постов:");
+                        break;
+                    case "Изменить ключевые слова":
+                        EditKeywords(update.Message.From.Id);
+                        break;
                     case "Назад":
+                        _isConfiguringPost = false;
+                        _postComponents = "";
+                        _selectedChannels.Clear();
+                        _isWaitingForAuthCode = false;
+                        _isAddingChannel = false;
                         await SendMainMenu(update.Message.From.Id);
                         break;
                     default:
@@ -121,6 +140,14 @@ namespace TgBotYandexMar.Controller
                         else if (_isConfiguringPost)
                         {
                             await HandlePostConfiguration(update.Message.From.Id, messageText);
+                        }
+                        else if(_changeWords.ChangeType != null && _changeWords.KeywordSetting != null)
+                        {
+                            await ChangeWords(update.Message.From.Id, messageText);
+                        }
+                        else if (_isMaxPost)
+                        {
+                            await ChangeMaxPost(update.Message.From.Id, messageText);
                         }
                         else if (_isWaitingForAuthCode)
                         {
@@ -157,6 +184,174 @@ namespace TgBotYandexMar.Controller
                         }
                         break;
                 }
+            }
+        }
+
+        private async Task ChangeMaxPost(long chatId, string newValue)
+        {
+            using (var scope = _scopeFactory.CreateScope())
+            {
+                var _dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var channel = await _dbContext.Channels.FirstOrDefaultAsync(c => c.Id == _selectedChannels[chatId]);
+                if (int.TryParse(newValue, out var maxPostsPerDay))
+                {
+                    channel.MaxPostsPerDay = maxPostsPerDay;
+                    // Проверяем условия для возобновления парсинга
+                    _channelService.AddChannel(channel);
+                    await _client.SendTextMessageAsync(chatId, $"Максимальное количество постов в день изменено на {maxPostsPerDay}.");
+                }
+                else
+                {
+                    await _client.SendTextMessageAsync(chatId, "Неверный формат числа.");
+                    return;
+                }
+                _dbContext.Channels.Update(channel);
+
+                // Сохраняем изменения в базе данных
+                await _dbContext.SaveChangesAsync();
+            }
+        }
+
+        private async Task ChangeWords(long chatId, string newValue)
+        {
+            using (var scope = _scopeFactory.CreateScope())
+            {
+                var parts = newValue.Split(',');
+                var keyword = parts[0].Trim();
+                if (parts.Length != 3)
+                    return;
+                TimeSpan.TryParse(parts[1].Trim(), out var parseFreq);
+                TimeSpan.TryParse(parts[2].Trim(), out var postFreq);
+                var channel = _selectedChannels[chatId];
+                var _dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                switch (_changeWords.ChangeType)
+                {
+                    case "edit_keyword": // Обработка изменения слов для парсинга
+                        var keywordSetting = _changeWords.KeywordSetting as KeywordSetting;
+
+                        if (parts.Length == 3 && TimeSpan.TryParse(parts[1].Trim(), out var parseFrequency) && TimeSpan.TryParse(parts[2].Trim(), out var postFrequency))
+                        {
+                            keywordSetting.Keyword = keyword;
+                            keywordSetting.ParseFrequency = parseFrequency;
+                            keywordSetting.PostFrequency = postFrequency;
+
+                            // Обновляем или создаем запись в KeywordStat
+                            var keywordStat = await _dbContext.KeywordStats
+                                .FirstOrDefaultAsync(k => k.KeywordSettingId == keywordSetting.Id);
+
+                            if (keywordStat != null)
+                            {
+                                // Если запись существует, обновляем ключевое слово и сбрасываем счетчик
+                                keywordStat.ParsedCount = 0; // Сбрасываем счетчик
+                                keywordStat.LastParsedAt = DateTime.UtcNow;
+                                _dbContext.KeywordStats.Update(keywordStat);
+                            }
+                            else
+                            {
+                                // Если записи нет, создаем новую
+                                keywordStat = new KeywordStat
+                                {
+                                    KeywordSettingId = keywordSetting.Id,
+                                    ParsedCount = 0, // Начинаем с нулевого счетчика
+                                    LastParsedAt = DateTime.UtcNow
+                                };
+                                _dbContext.KeywordStats.Add(keywordStat);
+                            }
+
+                            _dbContext.KeywordSettings.Update(keywordSetting);
+                            await _dbContext.SaveChangesAsync();
+                            await _client.SendTextMessageAsync(chatId, "Настройки ключевого слова успешно обновлены!");
+                        }
+                        else
+                        {
+                            await _client.SendTextMessageAsync(chatId, "Неверный формат данных. Используйте формат: 'ключевое слово, частота парсинга, частота постинга' (например, 'магнитола, 6:0:0, 2:0:0')");
+                        }
+                        break;
+                    case "add_keyword":
+                        var partsA = newValue.Split(',');
+                        if (partsA.Length == 3)
+                        {
+                            var keywordA = partsA[0].Trim();
+                            if (TimeSpan.TryParse(partsA[1].Trim(), out var parseFrequencyA) && TimeSpan.TryParse(partsA[2].Trim(), out var postFrequencyA))
+                            {
+                                var channelA = await _dbContext.Channels.FirstOrDefaultAsync(c => c.Id == channel);
+
+                                channelA.KeywordSettings.Add(new KeywordSetting
+                                {
+                                    Keyword = keywordA,
+                                    ParseFrequency = parseFrequencyA,
+                                    PostFrequency = postFrequencyA
+                                });
+
+                                await _dbContext.SaveChangesAsync();
+                                await _client.SendTextMessageAsync(chatId, "Ключевое слово успешно добавлено!");
+                            }
+                            else
+                            {
+                                await _client.SendTextMessageAsync(chatId, "Неверный формат данных. Используйте формат: 'ключевое слово, частота парсинга, частота постинга' (например, 'магнитола, 6:0:0, 2:0:0')");
+                            }
+                        }
+                        break;
+                    default:
+                        await _client.SendTextMessageAsync(chatId, "Неизвестный тип изменения.");
+                        return;
+                }
+
+                // Сохраняем изменения в базе данных
+                await _dbContext.SaveChangesAsync();
+
+                var channelS = await _dbContext.Channels.FirstOrDefaultAsync(c => c.Id == channel);
+                // Запускаем новые таймеры с обновленными настройками (если канал активен)
+                if (channelS.IsActive)
+                {
+                    _channelService.StartKeywordTimer(keyword, parseFreq, postFreq);
+                }
+
+                await _client.SendTextMessageAsync(chatId, "Изменение успешно применено!");
+
+                // Очищаем переменные
+                _changeWords = (null, null);
+
+                // Возвращаем пользователя в меню настройки канала
+                await ShowChannelSettings(chatId);
+            }
+        }
+
+        private async Task EditKeywords(long chatId)
+        {
+            using (var scope = _scopeFactory.CreateScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+                // Получаем ключевые слова для канала из таблицы KeywordSettings
+                var keywordSettings = await dbContext.KeywordSettings
+                    .Where(k => k.ChannelId == _selectedChannels[chatId])
+                    .ToListAsync();
+
+                // Создаем кнопки для каждого ключевого слова
+                var buttons = keywordSettings
+                    .Select(k => new[]
+                    {
+                InlineKeyboardButton.WithCallbackData
+                (
+                    $"{k.Keyword} (Парсинг: {k.ParseFrequency}, Постинг: {k.PostFrequency})",
+                    $"edit_keyword_{k.Id}"
+                )
+                    })
+                    .ToList();
+
+                // Добавляем кнопку для добавления нового ключевого слова
+                buttons.Add(new[] { InlineKeyboardButton.WithCallbackData("Добавить ключевое слово", "add_keyword") });
+
+                // Создаем меню с кнопками
+                var menu = new InlineKeyboardMarkup(buttons);
+
+                // Отправляем сообщение с меню
+                await _client.SendTextMessageAsync(
+                    chatId: chatId,
+                    text: "Выберите ключевое слово для редактирования:",
+                    replyMarkup: menu
+                );
             }
         }
 
@@ -209,92 +404,107 @@ namespace TgBotYandexMar.Controller
 
         private async Task HandlePostConfiguration(long chatId, string messageText)
         {
-            if (_postComponents.Count == 0)
+            try
             {
-                // Обработка первого элемента
-                if (messageText.Equals("цена", StringComparison.OrdinalIgnoreCase))
-                {
-                    _postComponents.Add("Price");
-                    await _client.SendTextMessageAsync(chatId, "Введите второй элемент поста (название или подпись):");
-                }
-                else if (messageText.Split(' ').Length == 1)
-                {
-                    _postComponents.Add("Title");
-                    _postComponents.Add(messageText);
-                    await _client.SendTextMessageAsync(chatId, "Введите третий элемент поста (подпись):");
-                }
-                else
-                {
-                    _postComponents.Add("Caption");
-                    _postComponents.Add(messageText);
-                    await _client.SendTextMessageAsync(chatId, "Введите второй элемент поста (цена или название):");
-                }
-            }
-            else if (_postComponents.Count == 1)
-            {
-                // Обработка второго элемента
-                if (messageText.Equals("цена", StringComparison.OrdinalIgnoreCase))
-                {
-                    _postComponents.Add("Price");
-                    await _client.SendTextMessageAsync(chatId, "Введите третий элемент поста (название или подпись):");
-                }
-                else if (messageText.Split(' ').Length == 1)
-                {
-                    _postComponents.Add("Title");
-                    _postComponents.Add(messageText);
-                    await _client.SendTextMessageAsync(chatId, "Введите третий элемент поста (подпись):");
-                }
-                else
-                {
-                    _postComponents.Add("Caption");
-                    _postComponents.Add(messageText);
-                    await _client.SendTextMessageAsync(chatId, "Введите третий элемент поста (цена или название):");
-                }
-            }
-            else if (_postComponents.Count == 2)
-            {
-                // Обработка третьего элемента
-                if (messageText.Equals("цена", StringComparison.OrdinalIgnoreCase))
-                {
-                    _postComponents.Add("Price");
-                }
-                else if (messageText.Split(' ').Length == 1)
-                {
-                    _postComponents.Add("Title");
-                    _postComponents.Add(messageText);
-                }
-                else
-                {
-                    _postComponents.Add("Caption");
-                    _postComponents.Add(messageText);
-                }
-
-                // Сохраняем настройки сборки поста
                 using (var scope = _scopeFactory.CreateScope())
                 {
                     var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                     var channel = await dbContext.Channels
                         .Include(c => c.PostSettings)
                         .FirstOrDefaultAsync(c => c.Id == _selectedChannels[chatId]);
-
-                    if (channel == null)
-                    {
-                        await _client.SendTextMessageAsync(chatId, "Канал не найден.");
-                        return;
-                    }
-
+                    // Если PostSettings отсутствует, создаем новый объект
                     if (channel.PostSettings == null)
                     {
-                        channel.PostSettings = new PostSettings();
+                        channel.PostSettings = new PostSettings
+                        {
+                            PriceTemplate = "",
+                            TitleTemplate = "",
+                            CaptionTemplate = "",
+                            Order = "",
+                            ChannelId = channel.Id, // Устанавливаем связь с каналом
+                            ShowRating = true,     // Значения по умолчанию
+                            ShowOpinionCount = true
+                        };
+                        dbContext.PostSetting.Add(channel.PostSettings); // Добавляем в контекст
                     }
-
-                    channel.PostSettings.Order = string.Join(",", _postComponents);
-                    await dbContext.SaveChangesAsync();
+                    switch (_postComponents)
+                    {
+                        case "PostSettings_First":
+                            if (messageText.Trim().ToLower() == "цена")
+                            {
+                                channel.PostSettings.PriceTemplate = "1"; // Например, "1" для цены
+                                channel.PostSettings.Order = "Price,"; // Добавляем порядок
+                                await _client.SendTextMessageAsync(chatId, "Введите второе значение (название или подпись):");
+                                _postComponents = "PostSettings_Second";
+                            }
+                            else if (messageText.Trim().ToLower() == "название")
+                            {
+                                channel.PostSettings.TitleTemplate = "1"; // Например, "1" для названия
+                                channel.PostSettings.Order = "Title,"; // Добавляем порядок
+                                await _client.SendTextMessageAsync(chatId, "Введите второе значение (цена или подпись):");
+                                _postComponents = "PostSettings_Second";
+                            }
+                            else
+                            {
+                                channel.PostSettings.CaptionTemplate = messageText; // Подпись
+                                channel.PostSettings.Order = "Caption,"; // Добавляем порядок
+                                await _client.SendTextMessageAsync(chatId, "Введите второе значение (цена или название):");
+                                _postComponents = "PostSettings_Second";
+                            }
+                            await dbContext.SaveChangesAsync();
+                            return;
+                        case "PostSettings_Second":
+                            if (messageText.Trim().ToLower() == "цена")
+                            {
+                                channel.PostSettings.PriceTemplate = "2"; // Например, "2" для цены
+                                channel.PostSettings.Order += "Price,"; // Добавляем порядок
+                                await _client.SendTextMessageAsync(chatId, "Введите третье значение (название или подпись):");
+                                _postComponents = "PostSettings_Third";
+                            }
+                            else if (messageText.Trim().ToLower() == "название")
+                            {
+                                channel.PostSettings.TitleTemplate = "2"; // Например, "2" для названия\
+                                channel.PostSettings.Order += "Title,"; // Добавляем порядок
+                                await _client.SendTextMessageAsync(chatId, "Введите третье значение (цена или подпись):");
+                                _postComponents = "PostSettings_Third";
+                            }
+                            else
+                            {
+                                channel.PostSettings.CaptionTemplate = messageText; // Подпись
+                                channel.PostSettings.Order += "Caption,"; // Добавляем порядок
+                                await _client.SendTextMessageAsync(chatId, "Введите третье значение (цена или название):");
+                                _postComponents = "PostSettings_Third";
+                            }
+                            await dbContext.SaveChangesAsync();
+                            return;
+                        case "PostSettings_Third":
+                            if (messageText.Trim().ToLower() == "цена")
+                            {
+                                channel.PostSettings.PriceTemplate = "3"; // Например, "3" для цены
+                                channel.PostSettings.Order += "Price"; // Добавляем порядок
+                            }
+                            else if (messageText.Trim().ToLower() == "название")
+                            {
+                                channel.PostSettings.TitleTemplate = "3"; // Например, "3" для названия
+                                channel.PostSettings.Order += "Title"; // Добавляем порядок
+                            }
+                            else
+                            {
+                                channel.PostSettings.CaptionTemplate = messageText; // Подпись
+                                channel.PostSettings.Order += "Caption"; // Добавляем порядок
+                            }
+                            await dbContext.SaveChangesAsync();
+                            await _client.SendTextMessageAsync(chatId, "Настройки сборки поста сохранены.");
+                            _postComponents = "";
+                            _isConfiguringPost = false;
+                            break;
+                    }
+                    //await dbContext.SaveChangesAsync();
                 }
-
-                await _client.SendTextMessageAsync(chatId, "Настройки сборки поста сохранены!");
-                _isConfiguringPost = false;
-                _postComponents.Clear();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Ошибка в сборке: {ex.ToString()}");
             }
         }
 
@@ -359,7 +569,11 @@ namespace TgBotYandexMar.Controller
                     new[] { new KeyboardButton("Изменить использование минимальной цены") },
                     new[] { new KeyboardButton("Изменить показ рейтинга") },
                     new[] { new KeyboardButton("Изменить показ отзывов") },
-                    new[] { new KeyboardButton("Назад") }
+                    new[] { new KeyboardButton("Изменить ключевые слова") },
+                    new[] { new KeyboardButton("Статистика канала") },
+                    new[] { new KeyboardButton("Изменить максимальное количество постов") },
+                    new[] { new KeyboardButton("Настроить сборку поста") },
+                    new[] { new KeyboardButton("Назад") },
                 })
                 {
                     ResizeKeyboard = true,
@@ -418,11 +632,11 @@ namespace TgBotYandexMar.Controller
 
                     case "Настроить сборку поста":
                         _isConfiguringPost = true;
-                        _postComponents.Clear();
+                        _postComponents = "PostSettings_First";
                         await _client.SendTextMessageAsync(chatId, "Введите первый элемент поста (цена, название или подпись):");
                         break;
 
-                    case "/stat":
+                    case "Статистика канала":
                         await ChannelStats(chatId);
                         break;
 
@@ -557,6 +771,7 @@ namespace TgBotYandexMar.Controller
 
                 await _client.SendTextMessageAsync(chatId, "Канал успешно добавлен!");
                 _isAddingChannel = false;
+                _channelService.AddChannel(channel);
             }
             catch (Exception ex)
             {
@@ -597,6 +812,43 @@ namespace TgBotYandexMar.Controller
         private string GenerateOAuthUrl(string clientId, string redirectUrl)
         {
             return $"https://oauth.yandex.ru/authorize?response_type=code&client_id={clientId}&redirect_uri={Uri.EscapeDataString(redirectUrl)}";
+        }
+
+        internal async Task BotClient_OnCallbackQuery(CallbackQuery? callbackQuery)
+        {
+            using (var scope = _scopeFactory.CreateScope())
+            {
+                var _dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+                var chatId = callbackQuery.Message.Chat.Id;
+                var data = callbackQuery.Data;
+
+
+                if (data.StartsWith("edit_keyword_"))
+                {
+                    var keywordId = int.Parse(data.Replace("edit_keyword_", ""));
+                    var keywordSetting = await _dbContext.KeywordSettings.FirstOrDefaultAsync(k => k.Id == keywordId);
+
+                    if (keywordSetting != null)
+                    {
+                        await _client.SendTextMessageAsync(chatId, $"Редактирование ключевого слова: {keywordSetting.Keyword}\n" +
+                            $"Текущая частота парсинга: {keywordSetting.ParseFrequency}\n" +
+                            $"Текущая частота постинга: {keywordSetting.PostFrequency}\n" +
+                            "Введите новое ключевое слово, частоту парсинга и частоту постинга в формате: 'ключевое слово, частота парсинга, частота постинга' (например, 'магнитола, 6:0:0, 2:0:0')\"");
+
+                        _changeWords = ("edit_keyword", keywordSetting);
+                    }
+                }
+                else if (data == "add_keyword")
+                {
+                    await _client.SendTextMessageAsync(chatId, "Введите новое ключевое слово и его настройки в формате: 'ключевое слово, частота парсинга, частота постинга' (например, 'магнитола, 6:0:0, 2:0:0')");
+                    _changeWords = ("add_keyword", _changeWords.KeywordSetting);
+                }
+                else
+                {
+                    await _client.SendTextMessageAsync(chatId, "Канал не найден.");
+                }
+            }
         }
 
         public class TokenResponse

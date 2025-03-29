@@ -1,5 +1,6 @@
 ﻿using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using TgBotYandexMar.Models;
@@ -9,6 +10,8 @@ namespace TgBotYandexMar.Services
     public class YandexMarketApiService
     {
         private readonly HttpClient _httpClient;
+        private int _currentPage = 1; // Текущая страница
+        private const int PageSize = 30; // Количество товаров на странице
 
         public YandexMarketApiService(HttpClient httpClient)
         {
@@ -18,7 +21,7 @@ namespace TgBotYandexMar.Services
         // Метод для поиска товаров
         public async Task<List<Product>> SearchProductsAsync(string keyword, string apiKey, int geoId = 1, bool exactMatch = false, string fields = "MODEL_MEDIA,MODEL_DEFAULT_OFFER,MODEL_PRICE,MODEL_RATING,OFFER_PHOTO")
         {
-            var url = $"https://api.content.market.yandex.ru/v3/affiliate/search?text={Uri.EscapeDataString(keyword)}&geo_id={geoId}&fields={fields}";
+            var url = $"https://api.content.market.yandex.ru/v3/affiliate/search?text={Uri.EscapeDataString(keyword)}&geo_id={geoId}&fields={fields}&page={_currentPage}&count={PageSize}";
             if (exactMatch)
             {
                 url += "&exact-match=true";
@@ -35,7 +38,7 @@ namespace TgBotYandexMar.Services
             var content = await response.Content.ReadAsStringAsync();
             var result = JsonSerializer.Deserialize<YandexMarketSearchResponse>(content);
 
-            return result?.Items.Select(item => new Product
+            var products = result?.Items.Select(item => new Product
             {
                 Name = item.Name,
                 MinPrice = item.Price?.Min ?? "0", // Минимальная цена
@@ -46,6 +49,22 @@ namespace TgBotYandexMar.Services
                 OpinionCount = item.OpinionCount ?? 0,
                 Photos = item.Offer?.Photos?.Select(p => p.Url).ToList() ?? new List<string>()
             }).ToList() ?? new List<Product>();
+
+            // Если товаров нет, сбрасываем страницу на 1
+            if (products.Count == 0)
+            {
+                _currentPage = 1;
+            }
+            else if(_currentPage == 50)
+            {
+                _currentPage = 1;
+            }
+            else
+            {
+                _currentPage++; // Переходим на следующую страницу
+            }
+
+            return products;
         }
 
         // Метод для создания партнерской ссылки
@@ -70,7 +89,7 @@ namespace TgBotYandexMar.Services
 
             // Создаем партнерскую ссылку
             var url = $"https://api.content.market.yandex.ru/v3/affiliate/partner/link/create?url={Uri.EscapeDataString(productUrl)}&clid={channel.Clid}&erid={eridToken}";
-            _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(channel.OAuthToken);
+            _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(channel.ApiKey);// Возможно нужно будет добавить в начале OAuth итог $"OAuth {channel.OAuthToken}"
 
             var response = await _httpClient.GetAsync(url);
             if (!response.IsSuccessStatusCode)
@@ -94,10 +113,12 @@ namespace TgBotYandexMar.Services
             public int ExpiresIn { get; set; }
         }
 
-        public async Task<string> GetEridTokenAsync(string productUrl, string apiKey, string clid, string postText, List<string> mediaUrls, Product product)
+        public async Task<string> GetEridTokenAsync(string productUrl, string apiKey, string clid, string postText, List<string> mediaUrls, Product product, string OAuthToken)
         {
             var url = "https://distribution.yandex.net/api/v2/creatives/";
-            _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(apiKey);
+            var request = new HttpRequestMessage(HttpMethod.Post, url);
+            request.Headers.Add($"Authorization", $"OAuth {OAuthToken}");
+            //_httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("AOuth", OAuthToken);
             var requestBody = new
             {
                 clid = clid,
@@ -115,17 +136,28 @@ namespace TgBotYandexMar.Services
                 urls = new[] { productUrl }, // Ссылка на товар
                 okveds = new[] { "62.01" } // Код ОКВЭД
             };
-
-            var response = await _httpClient.PostAsJsonAsync(url, requestBody);
+            var content1 = new StringContent(JsonSerializer.Serialize(requestBody), Encoding.UTF8, "application/json");
+            request.Content = content1;
+            var response = await _httpClient.SendAsync(request);
+            //var response = await _httpClient.PostAsJsonAsync(url, requestBody);
+            var content = await response.Content.ReadAsStringAsync();
             if (!response.IsSuccessStatusCode)
             {
+                var result1 = JsonSerializer.Deserialize<CheckErrorApiYandex>(content);
+                Console.WriteLine(result1.Data);
+                Console.WriteLine(result1.Error);
                 Console.WriteLine($"Ошибка при создании креатива: {response.StatusCode}");
             }
 
-            var content = await response.Content.ReadAsStringAsync();
-            var result = JsonSerializer.Deserialize<EridResponse>(content);
+            var result = JsonSerializer.Deserialize<DataResponse>(content);
 
-            return result?.Token;
+            return result?.Data.Token;
+        }
+
+        private class DataResponse
+        {
+            [JsonPropertyName("data")]
+            public EridResponse Data { get; set; }
         }
 
         private class EridResponse
@@ -205,6 +237,13 @@ namespace TgBotYandexMar.Services
         {
             [JsonPropertyName("url")]
             public string Url { get; set; }
+        }
+        private class CheckErrorApiYandex
+        {
+            [JsonPropertyName("result")]
+            public string Error { get; set; }
+            [JsonPropertyName("data")]
+            public string Data {  get; set; }
         }
     }
 }
