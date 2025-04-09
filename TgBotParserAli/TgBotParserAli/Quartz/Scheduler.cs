@@ -367,5 +367,39 @@ namespace TgBotParserAli.Quartz
             _postQueue = new ConcurrentQueue<(Channel channel, KeywordSetting keywordSetting)>(_postQueue.Where(x => x.channel.Id != channelId));
             Console.WriteLine($"Задачи постинга для канала {channelId} удалены из очереди.");
         }
+
+        public void StopAndCleanTimers(int keywordId)
+        {
+            using (var scope = _scopeFactory.CreateScope())
+            {
+                var _dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                // 1. Останавливаем таймеры
+                if (_parseTimers.TryGetValue(keywordId, out var parseTimer))
+                {
+                    parseTimer.Dispose();
+                    _parseTimers.Remove(keywordId);
+                }
+
+                if (_postTimers.TryGetValue(keywordId, out var postTimer))
+                {
+                    postTimer.Dispose();
+                    _postTimers.Remove(keywordId);
+                }
+
+                // 2. Сбрасываем флаги (если они хранятся в классе)
+                var keywordSetting = _dbContext.KeywordSettings.Find(keywordId);
+                if (keywordSetting != null)
+                {
+                    keywordSetting.IsParsing = false;
+                    keywordSetting.IsPosting = false;
+                }
+
+                // 3. Очищаем очереди от задач для этого ключа
+                _parseQueue = new ConcurrentQueue<(Channel, KeywordSetting)>(_parseQueue.Where(x => x.keywordSetting.Id != keywordId));
+                _postQueue = new ConcurrentQueue<(Channel, KeywordSetting)>(_postQueue.Where(x => x.keywordSetting.Id != keywordId));
+
+                Console.WriteLine($"Таймеры и очереди для ключа ID={keywordId} очищены.");
+            }
+        }
     }
 }

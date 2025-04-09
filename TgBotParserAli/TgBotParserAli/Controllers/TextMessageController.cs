@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using System.Text;
 using Telegram.Bot;
 using Telegram.Bot.Types;
+using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
 using TgBotParserAli.DB;
 using TgBotParserAli.Models;
@@ -18,6 +19,8 @@ namespace TgBotParserAli.Controllers
         private (string ChangeType, KeywordSetting Channel) _changeWords;
         private bool _isAddingChannel = false;
         private readonly IServiceScopeFactory _scopeFactory;
+        private bool _isEditWord = false;
+        private Dictionary<long, string> _userEditState = new ();
 
         public TextMessageController(ITelegramBotClient client, Scheduler scheduler, IServiceScopeFactory serviceScopeFactory)
         {
@@ -295,6 +298,10 @@ namespace TgBotParserAli.Controllers
                 {
                     await ApplyChange(chatId, text);
                 }
+                else if (_isEditWord)
+                {
+                    await EditAddWord(text, chatId);
+                }
                 else
                 {
                     var channel = await _dbContext.Channels.FirstOrDefaultAsync(c => c.Name == text);
@@ -305,6 +312,129 @@ namespace TgBotParserAli.Controllers
                     else
                     {
                         await _client.SendTextMessageAsync(chatId, "Канал не найден.");
+                    }
+                }
+            }
+        }
+
+        private async Task EditAddWord(string text, long chatId)
+        {
+            using (var scope = _scopeFactory.CreateScope())
+            {
+                var _dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                // Если пользователь нажал на кнопку "Добавить ключевое слово"
+                if (text == "Добавить ключевое слово")
+                {
+                    await _client.SendTextMessageAsync(
+                        chatId,
+                        "Введите новое ключевое слово, частоту парсинга и частоту постинга в формате: 'ключевое слово, частота парсинга, частота постинга' (например, 'магнитола, 6:0:0, 2:0:0')"
+                    );
+                    _userEditState[chatId] = "add";
+                }
+                // Если нажата кнопка с ключевым словом (например, "Котики (Парсинг: 5, Постинг: 2)")
+                else if (text.Contains("(Парсинг:") && text.Contains("Постинг:"))
+                {
+                    // Извлекаем текущее слово из текста кнопки
+                    var currentKeyword = text.Split('(')[0].Trim();
+
+                    // Запрашиваем новые данные
+                    await _client.SendTextMessageAsync(
+                        chatId,
+                        $"Введите новое ключевое слово, частоту парсинга и частоту постинга в формате: 'ключевое слово, частота парсинга, частота постинга' (например, 'магнитола, 6:0:0, 2:0:0')\""
+                    );
+                    // Сохраняем выбранное слово для проверки в следующем шаге
+                    _userEditState[chatId] = currentKeyword;
+                }
+                else
+                {
+                    if (_userEditState[chatId] != "add") 
+                    {
+                        Console.WriteLine($"Ключевое слово до: {_userEditState[chatId]}");
+                        var keywordSetting = await _dbContext.KeywordSettings.FirstOrDefaultAsync(kw => kw.Keyword == _userEditState[chatId]);
+                        if (keywordSetting == null) 
+                        {
+                            Console.WriteLine("KeywordSettings null");
+                            return;
+                        }
+                        _scheduler.StopAndCleanTimers(keywordSetting.Id);
+                        var parts = text.Split(',');
+                        var keyword = parts[0].Trim();
+                        if (parts.Length == 3 && TimeSpan.TryParse(parts[1].Trim(), out var parseFrequency) && TimeSpan.TryParse(parts[2].Trim(), out var postFrequency))
+                        {
+                            keywordSetting.Channel = _pendingChange.Channel;
+                            keywordSetting.Keyword = keyword;
+                            keywordSetting.ParseFrequency = parseFrequency;
+                            keywordSetting.PostFrequency = postFrequency;
+
+                            // Обновляем или создаем запись в KeywordStat
+                            var keywordStat = await _dbContext.KeywordStats
+                                .FirstOrDefaultAsync(k => k.Keyword == keywordSetting.Keyword);
+
+                            if (keywordStat != null)
+                            {
+                                // Если запись существует, обновляем ключевое слово и сбрасываем счетчик
+                                keywordStat.Keyword = keyword;
+                                keywordStat.Count = 0; // Сбрасываем счетчик
+                                keywordStat.LastUpdated = DateTime.UtcNow;
+                                _dbContext.KeywordStats.Update(keywordStat);
+                                await _dbContext.SaveChangesAsync();
+                            }
+                            else
+                            {
+                                // Если записи нет, создаем новую
+                                keywordStat = new KeywordStat
+                                {
+                                    ChannelId = keywordSetting.ChannelId,
+                                    Keyword = keyword,
+                                    Count = 0, // Начинаем с нулевого счетчика
+                                    LastUpdated = DateTime.UtcNow
+                                };
+                                _dbContext.KeywordStats.Add(keywordStat);
+                            }
+
+                            _dbContext.KeywordSettings.Update(keywordSetting);
+                            await _dbContext.SaveChangesAsync();
+                            await _client.SendTextMessageAsync(chatId, "Настройки ключевого слова успешно обновлены!");
+                            _scheduler.UpdateTimersForKeyword(keywordSetting);
+                            _isEditWord = false;
+                            SendMainMenu(chatId);
+                        }
+                        else
+                        {
+                            await _client.SendTextMessageAsync(chatId, "Неверный формат данных. Используйте формат: 'ключевое слово, частота парсинга, частота постинга' (например, 'магнитола, 6:0:0, 2:0:0')");
+                        }
+                    }
+                    else
+                    {
+                        var parts = text.Split(',');
+                        var keyword = parts[0].Trim();
+                        if (parts.Length == 3 && TimeSpan.TryParse(parts[1].Trim(), out var parseFrequency) && TimeSpan.TryParse(parts[2].Trim(), out var postFrequency))
+                        {
+                            var keyWord = new KeywordSetting
+                            {
+                                ChannelId = _pendingChange.Channel.Id,
+                                Channel = _pendingChange.Channel,
+                                Keyword = keyword,
+                                ParseFrequency = parseFrequency,
+                                PostFrequency = postFrequency
+                            };
+                            _dbContext.KeywordSettings.Add(keyWord);
+
+                            var keywordStat = new KeywordStat
+                            {
+                                ChannelId = _pendingChange.Channel.Id,
+                                Keyword = keyword,
+                                Count = 0, // Начинаем с нулевого счетчика
+                                LastUpdated = DateTime.UtcNow
+                            };
+                            _dbContext.KeywordStats.Add(keywordStat);
+                            await _dbContext.SaveChangesAsync();
+                            await _client.SendTextMessageAsync(chatId, "Настройки ключевого слова успешно обновлены!");
+                            _scheduler.UpdateTimersForKeyword(keyWord);
+                            _userEditState.Remove(chatId);
+                            _isEditWord = false;
+                            SendMainMenu(chatId);
+                        }
                     }
                 }
             }
@@ -666,8 +796,11 @@ namespace TgBotParserAli.Controllers
 
                 if (channels.Any())
                 {
-                    var buttons = channels.Select(channel => new[] { InlineKeyboardButton.WithCallbackData(channel.Name) }).ToArray(); ;
-                    var menu = new InlineKeyboardMarkup(buttons);
+                    var buttons = channels.Select(channel => new KeyboardButton(channel.Name)).ToArray();
+                    var menu = new ReplyKeyboardMarkup(new[] { buttons })
+                    {
+                        ResizeKeyboard = true // Опционально: делает кнопки меньшего размера
+                    };
 
                     await _client.SendTextMessageAsync(chatId, "Выберите канал для настройки:", replyMarkup: menu);
                 }
@@ -906,35 +1039,36 @@ namespace TgBotParserAli.Controllers
             {
                 var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-                // Получаем ключевые слова для канала из таблицы KeywordSettings
+                // Получаем ключевые слова для канала
                 var keywordSettings = await dbContext.KeywordSettings
                     .Where(k => k.ChannelId == channel.Id)
                     .ToListAsync();
 
                 // Создаем кнопки для каждого ключевого слова
                 var buttons = keywordSettings
-                    .Select(k => new[]
-                    {
-                InlineKeyboardButton.WithCallbackData
-                (
-                    $"{k.Keyword} (Парсинг: {k.ParseFrequency}, Постинг: {k.PostFrequency})",
-                    $"edit_keyword_{k.Id}"
-                )
-                    })
+                    .Select(k => new KeyboardButton(
+                        $"{k.Keyword} (Парсинг: {k.ParseFrequency}, Постинг: {k.PostFrequency})"
+                    ))
                     .ToList();
 
                 // Добавляем кнопку для добавления нового ключевого слова
-                buttons.Add(new[] { InlineKeyboardButton.WithCallbackData("Добавить ключевое слово", "add_keyword") });
+                buttons.Add(new KeyboardButton("Добавить ключевое слово"));
 
-                // Создаем меню с кнопками
-                var menu = new InlineKeyboardMarkup(buttons);
+                // Создаем Reply-клавиатуру (кнопки внизу экрана)
+                var menu = new ReplyKeyboardMarkup(buttons.Chunk(1).ToArray()) // Chunk(1) = одна кнопка в строке
+                {
+                    ResizeKeyboard = true, // Автоматически подгоняет размер кнопок
+                    OneTimeKeyboard = true // Скрывает клавиатуру после нажатия (опционально)
+                };
 
-                // Отправляем сообщение с меню
+                // Отправляем сообщение с клавиатурой
                 await _client.SendTextMessageAsync(
                     chatId: chatId,
                     text: "Выберите ключевое слово для редактирования:",
                     replyMarkup: menu
                 );
+
+                _isEditWord = true;
             }
         }
     }

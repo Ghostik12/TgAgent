@@ -62,7 +62,7 @@ namespace TgBotAgent.Models
                         _voiceMessageController.HandlerDocument(update.Message.From.Id, update);
                         return;
                     case MessageType.Photo:
-                        _voiceMessageController.HandlerPhoto(update.Message.From.Id, update);
+                        _textMessageController.HandleUserMessage(update.Message.From.Id, update.Message);
                         return;
                     case MessageType.Video:
                         _voiceMessageController.HandlerVideo(update.Message.From.Id, update);

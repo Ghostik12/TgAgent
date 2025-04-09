@@ -790,7 +790,35 @@ namespace TgBotAgent.Controller
                         }
                     }
                 }
-                await _clientBot.SendTextMessageAsync(toUserId, message.Text);
+
+                // Пересылка сообщения
+                if (message.Photo != null && message.Photo.Any())
+                {
+                    // Если фото несколько — отправляем их как медиагруппу
+                    if (message.Photo.Length > 1)
+                    {
+                        var mediaGroup = message.Photo
+                            .Select(p => new InputMediaPhoto(p.FileId))
+                            .ToList();
+
+                        await _clientBot.SendMediaGroupAsync(
+                            chatId: toUserId,
+                            media: mediaGroup);
+                    }
+                    else
+                    {
+                        // Если фото одно — отправляем его отдельно
+                        var photo = message.Photo.Last();
+                        await _clientBot.SendPhotoAsync(
+                            chatId: toUserId,
+                            photo: photo.FileId,
+                            caption: message.Caption);
+                    }
+                }
+                else if (!string.IsNullOrEmpty(message.Text))
+                {
+                    await _clientBot.SendTextMessageAsync(toUserId, message.Text);
+                }
             }
             catch(ApiRequestException ex) 
             {

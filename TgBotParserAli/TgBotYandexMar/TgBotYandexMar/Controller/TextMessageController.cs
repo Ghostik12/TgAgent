@@ -1,6 +1,7 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using System.Net.Http;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Telegram.Bot;
@@ -124,6 +125,9 @@ namespace TgBotYandexMar.Controller
                     case "Изменить ключевые слова":
                         EditKeywords(update.Message.From.Id);
                         break;
+                    case "📊Статистика":
+                        await ShowStatisticChannels(update.Message.From.Id);
+                        break;
                     case "Назад":
                         _isConfiguringPost = false;
                         _postComponents = "";
@@ -187,6 +191,31 @@ namespace TgBotYandexMar.Controller
             }
         }
 
+        private async Task ShowStatisticChannels(long chatId)
+        {
+            using (var scope = _scopeFactory.CreateScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+                var channels = await dbContext.Channels.ToListAsync();
+
+                var stats = new StringBuilder();
+                foreach (var channel in channels)
+                {
+                    var channelStat = await dbContext.ChannelStats.FirstOrDefaultAsync(cs => cs.ChannelId == channel.Id);
+                    var postedCount = channelStat.PostedCount;
+                    var notPostedCount = await dbContext.Products
+                        .CountAsync(p => p.ChannelId == channel.Id && !p.IsPosted);
+
+                    stats.AppendLine($"Канал: {channel.Name}");
+                    stats.AppendLine($"- Опубликовано сегодня: {postedCount}/{channel.MaxPostsPerDay}");
+                    stats.AppendLine($"- Не опубликовано: {channelStat.FailedCount}");
+                    stats.AppendLine();
+                }
+                    await _client.SendTextMessageAsync(chatId, stats.ToString());
+            }
+        }
+
         private async Task ChangeMaxPost(long chatId, string newValue)
         {
             using (var scope = _scopeFactory.CreateScope())
@@ -206,6 +235,7 @@ namespace TgBotYandexMar.Controller
                     return;
                 }
                 _dbContext.Channels.Update(channel);
+                _isMaxPost = false;
 
                 // Сохраняем изменения в базе данных
                 await _dbContext.SaveChangesAsync();
@@ -370,7 +400,7 @@ namespace TgBotYandexMar.Controller
             var tokenResponse = await _httpClient.PostAsync(tokenUrl, tokenRequestBody);
             if (!tokenResponse.IsSuccessStatusCode)
             {
-                throw new Exception($"Ошибка при получении токена доступа: {tokenResponse.StatusCode}");
+                Console.WriteLine($"Ошибка при получении токена доступа: {tokenResponse.StatusCode}");
             }
 
             var tokenContent = await tokenResponse.Content.ReadAsStringAsync();
@@ -378,7 +408,7 @@ namespace TgBotYandexMar.Controller
 
             if (tokenResult == null || string.IsNullOrEmpty(tokenResult.AccessToken))
             {
-                throw new Exception("Не удалось получить токен доступа.");
+                Console.WriteLine("Не удалось получить токен доступа.");
             }
 
             return tokenResult.AccessToken;
