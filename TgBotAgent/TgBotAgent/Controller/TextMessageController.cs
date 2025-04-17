@@ -1,12 +1,17 @@
 ﻿using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Scaffolding.Metadata;
+using Microsoft.Extensions.DependencyInjection;
+using System.Collections.Concurrent;
+using System.Linq;
 using Telegram.Bot;
 using Telegram.Bot.Exceptions;
 using Telegram.Bot.Types;
+using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
 using TgBotAgent.DB;
 using TgBotAgent.Models;
+using static Microsoft.EntityFrameworkCore.DbLoggerCategory;
 using Update = Telegram.Bot.Types.Update;
 
 namespace TgBotAgent.Controller
@@ -15,18 +20,24 @@ namespace TgBotAgent.Controller
     {
         private ITelegramBotClient _clientBot;
         private static readonly Dictionary<long, int> _currentPage = new Dictionary<long, int>();
-        private readonly ApplicationDbContext db;
+        //private readonly ApplicationDbContext db;
+        // Кеш для хранения медиагрупп
+        private static readonly Dictionary<string, List<PhotoSize>> _mediaGroupCache = new();
+        private static readonly ConcurrentDictionary<string, MediaGroupData> _mediaGroups = new();
+        private readonly IServiceScopeFactory _scopeFactory;
 
-        public TextMessageController(ITelegramBotClient clientBot, ApplicationDbContext _db)
+        public TextMessageController(ITelegramBotClient clientBot, IServiceScopeFactory scopeFactory)
         {
             _clientBot = clientBot;
-            db = _db;
+            _scopeFactory = scopeFactory;
         }
 
         internal async Task CheckUserOrAdmin(Update update)
         {
             try
             {
+                using var scope = _scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
                 var chatId = update.Message.Chat.Id;
                 var isUser = await db.Users.Where(u => u.ChatId == chatId).FirstOrDefaultAsync();
                 var userLink = await db.UserLinks.Where(ul => ul.UserId1 == chatId || ul.UserId2 == chatId || ul.UserName1 == update.Message.Chat.Username || ul.UserName2 == update.Message.Chat.Username)
@@ -97,6 +108,8 @@ namespace TgBotAgent.Controller
 
         private async Task WelcomeMessage(long chatId)
         {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
             var message = await db.Settings.FirstOrDefaultAsync(s => s.Key == "WelcomeMessage");
             await _clientBot.SendTextMessageAsync(chatId, message.Value);
         }
@@ -235,6 +248,8 @@ namespace TgBotAgent.Controller
 
         private async Task GetBlackList(long chatId)
         {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
             var blackList = await db.BlacklistWords.Select(bl => new {bl.Word}).ToListAsync();
             if (!blackList.Any())
             {
@@ -255,6 +270,8 @@ namespace TgBotAgent.Controller
 
         private async Task AdminList(long chatId)
         {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
             // Получаем список администраторов из базы данных
             var admins = await db.Admins
                 .Select(a => new { a.ChatId })
@@ -284,6 +301,8 @@ namespace TgBotAgent.Controller
 
         private async Task ShowUsersPairs(long chatId)
         {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
             // Получаем все пары из базы данных
             var userPairs = await db.UserLinks
                 .Select(ul => new { User1 = ul.UserId1, User2 = ul.UserId2, User3 = ul.UserName1, User4 = ul.UserName2})
@@ -313,6 +332,8 @@ namespace TgBotAgent.Controller
 
         private async Task ExportMessagesForDay(long chatId)
         {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
             DateTime startDate;
             // Экспорт за последние 24 часа
             startDate = DateTime.UtcNow.AddHours(-24);
@@ -369,6 +390,8 @@ namespace TgBotAgent.Controller
 
         private async Task UnlinkUserUsername(long chatId, string userName)
         {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
             var userLink = await db.UserLinks
             .FirstOrDefaultAsync(ul => ul.UserName1 == userName || ul.UserName2 == userName);
 
@@ -389,6 +412,8 @@ namespace TgBotAgent.Controller
         {
             try
             {
+                using var scope = _scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
                 var existingLink = await db.UserLinks
                 .FirstOrDefaultAsync(ul =>
                     (ul.UserName1 == userName1 && ul.UserName2 == userName2) ||
@@ -414,6 +439,8 @@ namespace TgBotAgent.Controller
 
         private async Task SettingClearDay(long chatId, string newDay)
         {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
             var setting = await db.Settings.FirstOrDefaultAsync(s => s.Key == "ClearDay");
             if (setting == null)
             {
@@ -443,6 +470,8 @@ namespace TgBotAgent.Controller
 
         private async Task ExportMessages(long chatId, string date)
         {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
             if (!DateTime.TryParse(date, out var targetDate))
             {
                 await _clientBot.SendTextMessageAsync(chatId, "Некорректная дата.");
@@ -505,6 +534,8 @@ namespace TgBotAgent.Controller
 
         private async Task ViewMessages(long chatId, int page)
         {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
             // Получаем все пары из базы данных
             var userPairs = await db.UserLinks
                 .Select(ul => new { User1 = ul.UserId1, User2 = ul.UserId2, User3 = ul.UserName1, User4 = ul.UserName2 })
@@ -602,6 +633,8 @@ namespace TgBotAgent.Controller
 
         private async Task RemoveBlacklistWord(long chatId, string word)
         {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
             var blacklistWord = await db.BlacklistWords.FirstOrDefaultAsync(b => b.Word == word);
             if (blacklistWord == null)
             {
@@ -617,6 +650,8 @@ namespace TgBotAgent.Controller
 
         private async Task AddBlacklistWord(long chatId, string word)
         {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
             var wordDb = await db.BlacklistWords.FirstOrDefaultAsync(x => x.Word == word);
             if(wordDb != null)
             {
@@ -631,6 +666,8 @@ namespace TgBotAgent.Controller
 
         private async Task UnlinkUser(long chatId, long userId)
         {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
             var userLink = await db.UserLinks
             .FirstOrDefaultAsync(ul => ul.UserId1 == userId || ul.UserId2 == userId);
 
@@ -649,6 +686,8 @@ namespace TgBotAgent.Controller
 
         private async Task LinkUsers(long chatId, long userId1, long userId2)
         {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
             var existingLink = await db.UserLinks
             .FirstOrDefaultAsync(ul =>
                 (ul.UserId1 == userId1 && ul.UserId2 == userId2) ||
@@ -669,6 +708,8 @@ namespace TgBotAgent.Controller
 
         private async Task SetWelcomeMessage(long chatId, string welcomeText)
         {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
             var setting = await db.Settings.FirstOrDefaultAsync(s => s.Key == "WelcomeMessage");
             if (setting == null)
             {
@@ -685,6 +726,8 @@ namespace TgBotAgent.Controller
 
         private async Task RemoveAdmin(long chatId, long userId)
         {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
             var admin = await db.Admins.FirstOrDefaultAsync(a => a.ChatId == userId);
             if (admin == null)
             {
@@ -700,6 +743,8 @@ namespace TgBotAgent.Controller
 
         private async Task AddAdmin(long chatId, long userId)
         {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
             if (await db.Admins.AnyAsync(a => a.ChatId == userId))
             {
                 await _clientBot.SendTextMessageAsync(chatId, "Пользователь уже является администратором.");
@@ -714,6 +759,8 @@ namespace TgBotAgent.Controller
 
         private async Task<bool> IsAdmin(long chatId)
         {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
             return await db.Admins.AnyAsync(a => a.ChatId == chatId);
         }
 
@@ -721,6 +768,8 @@ namespace TgBotAgent.Controller
         {
             try
             {
+                using var scope = _scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
                 var userLink = await db.UserLinks
                     .FirstOrDefaultAsync(ul => ul.UserId1 == chatId || ul.UserId2 == chatId);
                 var listAdmin = db.Admins.Select(a => a.ChatId);
@@ -741,13 +790,13 @@ namespace TgBotAgent.Controller
                 var toUsername = toUser?.Username ?? "Unknown";
 
                 // Сохраняем сообщение в базу данных
-                db.Messages.Add(new MessageRecord
+                await db.Messages.AddAsync(new MessageRecord
                 {
                     FromUserId = message.From.Id,
                     FromUsername = message.From.Username,
                     ToUserId = toUserId,
                     ToUsername = toUsername,
-                    Text = message.Text,
+                    Text = message.Text ?? "Фото",
                     Timestamp = utcTargetDate
                 });
 
@@ -755,7 +804,7 @@ namespace TgBotAgent.Controller
 
 
                 // Проверка на черный список
-                if (blacklistWords.Any(word => message.Text.Contains(word.Word, StringComparison.OrdinalIgnoreCase)))
+                if (!string.IsNullOrEmpty(message.Text) && blacklistWords.Any(word => message.Text.Contains(word.Word, StringComparison.OrdinalIgnoreCase)))
                 {
                     foreach (var adm in listAdmin)
                     {
@@ -790,38 +839,64 @@ namespace TgBotAgent.Controller
                         }
                     }
                 }
+                // Диагностический лог
+                Console.WriteLine($"[DEBUG] Получено сообщение. Type: {message.Type}, MediaGroupId: {message.MediaGroupId}, Photo count: {message.Photo?.Length ?? 0}");
 
-                // Пересылка сообщения
-                if (message.Photo != null && message.Photo.Any())
+                // 1. Если это часть медиагруппы
+                if (message.MediaGroupId != null && message.Photo != null)
                 {
-                    // Если фото несколько — отправляем их как медиагруппу
-                    if (message.Photo.Length > 1)
-                    {
-                        var mediaGroup = message.Photo
-                            .Select(p => new InputMediaPhoto(p.FileId))
-                            .ToList();
+                    var bestPhoto = message.Photo.OrderByDescending(p => p.FileSize).First();
+                    Console.WriteLine($"Выбрано фото: {bestPhoto.Width}x{bestPhoto.Height} " +
+                                     $"(UniqueId: {bestPhoto.FileUniqueId})");
 
-                        await _clientBot.SendMediaGroupAsync(
-                            chatId: toUserId,
-                            media: mediaGroup);
-                    }
-                    else
+                    // Если это часть медиагруппы
+                    if (!string.IsNullOrEmpty(message.MediaGroupId))
                     {
-                        // Если фото одно — отправляем его отдельно
-                        var photo = message.Photo.Last();
+                        var groupId = message.MediaGroupId;
+
+                        var group = _mediaGroups.AddOrUpdate(groupId,
+                            _ => new MediaGroupData
+                            {
+                                Photos = { bestPhoto },
+                                Caption = message.Caption,
+                                LastUpdate = DateTime.UtcNow
+                            },
+                            (_, existing) =>
+                            {
+                                if (!existing.Photos.Any(p => p.FileUniqueId == bestPhoto.FileUniqueId))
+                                {
+                                    existing.Photos.Add(bestPhoto);
+                                }
+                                existing.LastUpdate = DateTime.UtcNow;
+                                return existing;
+                            });
+
+                        Console.WriteLine($"Группа {groupId} содержит {group.Photos.Count} фото");
+
+                        // Запускаем обработку с задержкой
+                        _ = ProcessMediaGroupWithDelay(groupId, toUserId);
+                        return;
+                    }
+                }
+
+                    // 2. Пересылка одиночного фото
+                    else if (message.Photo != null && message.Photo.Any())
+                    {
+                        var largestPhoto = message.Photo.OrderByDescending(p => p.FileSize).First();
                         await _clientBot.SendPhotoAsync(
                             chatId: toUserId,
-                            photo: photo.FileId,
+                            photo: largestPhoto.FileId,
                             caption: message.Caption);
                     }
-                }
-                else if (!string.IsNullOrEmpty(message.Text))
-                {
-                    await _clientBot.SendTextMessageAsync(toUserId, message.Text);
-                }
+                    else if (!string.IsNullOrEmpty(message.Text))
+                    {
+                        await _clientBot.SendTextMessageAsync(toUserId, message.Text);
+                    }
             }
             catch(ApiRequestException ex) 
             {
+                using var scope = _scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
                 var listAdmin = db.Admins.Select(a => a.ChatId);
                 foreach (var adm in listAdmin)
                 {
@@ -831,6 +906,8 @@ namespace TgBotAgent.Controller
             }
             catch (Exception ex)
             {
+                using var scope = _scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
                 var listAdmin = db.Admins.Select(a => a.ChatId);
                 foreach (var adm in listAdmin)
                 {
@@ -839,6 +916,72 @@ namespace TgBotAgent.Controller
                 // Обработка других исключений
                 Console.WriteLine($"Неизвестная ошибка при отправке сообщения администратору {chatId}: {ex.Message}");
             }
+        }
+
+        class MediaGroupData
+        {
+            public List<PhotoSize> Photos { get; } = new();
+            public string? Caption { get; set; }
+            public DateTime LastUpdate { get; set; } = DateTime.UtcNow;
+        }
+
+        private async Task ProcessMediaGroupWithDelay(string groupId, long toUserId)
+        {
+            await Task.Delay(1000); // Ждем 3 секунды для сбора всех частей
+
+            // Исправленный вариант TryRemove
+            if (_mediaGroups.TryGetValue(groupId, out var group))
+            {
+                // Удаляем группу из словаря
+                _mediaGroups.TryRemove(groupId, out _);
+
+                Console.WriteLine($"Отправка группы {groupId} с {group.Photos.Count} фото");
+
+                if (group.Photos.Count > 0)
+                {
+                    try
+                    {
+                        if (group.Photos.Count > 1)
+                        {
+                            var mediaGroup = group.Photos
+                                .Select(p => new InputMediaPhoto(InputFile.FromFileId(p.FileId)))
+                                .ToList();
+
+                            if (!string.IsNullOrEmpty(group.Caption))
+                                mediaGroup[0].Caption = group.Caption;
+
+                            await _clientBot.SendMediaGroupAsync(
+                                chatId: toUserId, // Используем chatId из первого фото
+                                media: mediaGroup);
+                        }
+                        else
+                        {
+                            await _clientBot.SendPhotoAsync(
+                                chatId: toUserId,
+                                photo: group.Photos[0].FileId,
+                                caption: group.Caption);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Ошибка отправки: {ex}");
+                    }
+                }
+            }
+        }
+
+        private async Task SendMediaGroup(List<PhotoSize> photos, long toUserId)
+        {
+            if (photos.Count == 0) return;
+
+            // Отправляем как медиагруппу
+            var mediaGroup = photos
+                .Select(p => new InputMediaPhoto(InputFile.FromFileId(p.FileId)))
+                .ToList();
+
+            await _clientBot.SendMediaGroupAsync(toUserId, mediaGroup);
+
+            Console.WriteLine($"Отправлено {photos.Count} фото в медиагруппе");
         }
 
         public async Task BotClient_OnCallbackQuery(CallbackQuery e)
@@ -885,6 +1028,8 @@ namespace TgBotAgent.Controller
 
         private async Task ExportPairMessages(long chatId, long userId1, long userId2)
         {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
             // Получаем переписку для выбранной пары
             var messages = await db.Messages
                 .Where(m => (m.FromUserId == userId1 && m.ToUserId == userId2) ||
