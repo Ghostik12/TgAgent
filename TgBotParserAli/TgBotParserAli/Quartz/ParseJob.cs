@@ -1,5 +1,7 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using Newtonsoft.Json;
+using System.Collections.Concurrent;
+using Telegram.Bot;
 using TgBotParserAli.DB;
 using TgBotParserAli.Models;
 
@@ -7,14 +9,17 @@ namespace TgBotParserAli.Quartz
 {
     public class ParseJob
     {
+        private readonly ITelegramBotClient _botClient;
         private readonly EpnApiClient _epnApiClient;
         private readonly AppDbContext _dbContext;
         private readonly DbContextOptions<AppDbContext> _dbContextOptions;
         private static readonly SemaphoreSlim _parseSemaphore = new SemaphoreSlim(1, 1);
         private TokenService _tokenService;
+        private ConcurrentDictionary<string, bool> _messages = new();
 
-        public ParseJob(AppDbContext appDbContext, EpnApiClient epnApiClient, DbContextOptions<AppDbContext> dbContextOptions, TokenService tokenService)
+        public ParseJob(AppDbContext appDbContext, ITelegramBotClient botClient, EpnApiClient epnApiClient, DbContextOptions<AppDbContext> dbContextOptions, TokenService tokenService)
         {
+            _botClient = botClient;
             _dbContext = appDbContext;
             _epnApiClient = epnApiClient;
             _dbContextOptions = dbContextOptions;
@@ -140,6 +145,23 @@ namespace TgBotParserAli.Quartz
                                     }
                                 }
                             }
+
+                            if (!_messages.ContainsKey(channel.Name))
+                                _messages[channel.Name] = false;
+
+                            if (addedProductsCount == 0)
+                            {
+                                if (_messages[channel.Name] == false)
+                                {
+                                    var admin = await dbContext.Admin.FirstAsync();
+                                    await _botClient.SendTextMessageAsync(admin.ChatId, $"Для данного канала {channel.Name}\n" +
+                                        $"Клювое слово {keywordSetting.Keyword}" +
+                                        $"Нет товаров для публикации");
+                                    _messages[channel.Name] = true;
+                                }
+                            }
+                            else
+                                _messages[channel.Name] = false;
 
                             // Обновляем ParsedCount
                             channel.ParsedCount += channel.ParseCount;

@@ -123,7 +123,8 @@ namespace TgBotParserAli.Quartz
                 using (var scope = _scopeFactory.CreateScope())
                 {
                     var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                    var parseJob = new ParseJob(dbContext, _epnApiClient, _dbContextOptions, _tokenService);
+                    var botClient = scope.ServiceProvider.GetRequiredService<ITelegramBotClient>();
+                    var parseJob = new ParseJob(dbContext, botClient, _epnApiClient, _dbContextOptions, _tokenService);
 
                     if (channel != null)
                     {
